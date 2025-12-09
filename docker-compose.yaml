@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: raglab-postgres
+    environment:
+      POSTGRES_DB: raglab
+      POSTGRES_USER: raglab
+      POSTGRES_PASSWORD: raglab_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raglab"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: raglab-api
+    environment:
+      # GCP credentials (use your own project)
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-your-project-id}
+      GCP_LOCATION: ${GCP_LOCATION:-us-central1}
+      GCS_BUCKET: ${GCS_BUCKET:-raglab-documents}
+      PORT: 8080
+      
+      # Database connection
+      DATABASE_URL: postgresql://raglab:raglab_dev_password@postgres:5432/raglab
+      
+      # For development only - mount credentials
+      GOOGLE_APPLICATION_CREDENTIALS: /app/service-account-key.json
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Mount source code for development (hot reload)
+      - ./src:/app/src
+      
+      # Mount GCP credentials (optional, for local dev)
+      # Create service-account-key.json if you have one
+      - ./service-account-key.json:/app/service-account-key.json:ro
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
+
+volumes:
+  postgres_data:

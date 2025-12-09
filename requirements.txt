@@ -1,0 +1,40 @@
+# Core dependencies
+google-cloud-aiplatform>=1.38.0
+google-cloud-storage>=2.10.0
+vertexai>=1.0.0
+
+# FastAPI and web server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Vector operations
+faiss-cpu>=1.7.4
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.65.0
+
+# Jupyter (dev only, not needed for Cloud Run)
+# jupyter>=1.0.0
+# ipython>=8.12.0
+
+# PostgreSQL + pgvector (vector storage - multi-cloud portable!)
+psycopg2-binary>=2.9.9
+pgvector>=0.2.3
+asyncpg>=0.29.0  # Async PostgreSQL driver for FastAPI
+
+# Document processing
+pymupdf>=1.23.0  # PDF text extraction
+
+# Optional: Local embeddings (for 100% portability)
+# sentence-transformers>=2.3.0  # Uncomment for local embedding models
+
+# Optional: LangChain integration
+# langchain>=0.1.0
+# langchain-google-vertexai>=0.1.0
