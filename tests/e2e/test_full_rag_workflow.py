@@ -59,7 +59,9 @@ def test_documents():
     fixtures_dir = Path(__file__).parent.parent / "fixtures" / "documents"
     return {
         "txt": fixtures_dir / "rag_architecture_guide.txt",
-        "pdf": Path.home() / "Downloads" / "Квитанция за ноябрь 2025 (ЛС 990270090) МУП г.Сочи «Водоканал».pdf"
+        "pdf": fixtures_dir / "test_invoice.pdf",
+        "pdf_technical": fixtures_dir / "test_technical_doc.pdf",
+        "pdf_visual": fixtures_dir / "test_quarterly_report.pdf"
     }
 
 
@@ -114,8 +116,7 @@ def test_03_upload_pdf_document(test_documents):
     print("\n=== Step 3: Upload PDF document ===")
     
     pdf_path = test_documents["pdf"]
-    if not pdf_path.exists():
-        pytest.skip(f"PDF test file not found: {pdf_path}")
+    assert pdf_path.exists(), f"Test file not found: {pdf_path}"
     
     with open(pdf_path, "rb") as f:
         files = {"file": (pdf_path.name, f, "application/pdf")}
