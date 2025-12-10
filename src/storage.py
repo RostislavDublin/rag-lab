@@ -10,10 +10,10 @@ Handles all GCS operations for the RAG system:
 Structure in GCS:
 gs://bucket/
 └── {doc_uuid}/
-    ├── document.pdf
-    ├── extracted.txt
+    ├── original             # Original file (PDF/TXT, no extension)
+    ├── extracted.txt        # Full extracted text
     └── chunks/
-        ├── 000.json
+        ├── 000.json        # {"text": "...", "index": 0, "metadata": {...}}
         ├── 001.json
         └── ...
 """
@@ -49,24 +49,31 @@ class DocumentStorage:
         pdf_bytes: bytes,
         extracted_text: str,
         chunks: List[dict],
+        file_type: str = "pdf",
     ):
         """
         Upload all document artifacts to GCS
         
         Args:
             doc_uuid: Document UUID (from PostgreSQL)
-            pdf_bytes: Original PDF file bytes
-            extracted_text: Extracted text from PDF
+            pdf_bytes: Original file bytes (PDF or TXT)
+            extracted_text: Extracted text
             chunks: List of chunk dicts with 'text' and 'index' fields
+            file_type: File type ('pdf' or 'txt')
+        
+        Note: Always saves original file as 'document.pdf' regardless of actual type.
+        The real filename is stored in PostgreSQL metadata.
         """
         # Upload tasks
         tasks = []
         
-        # 1. Upload PDF
+        # 1. Upload original file (always as 'original' regardless of type)
+        content_type = "application/pdf" if file_type == "pdf" else "text/plain"
+        
         tasks.append(self._upload(
-            path=f"{doc_uuid}/document.pdf",
+            path=f"{doc_uuid}/original",
             content=pdf_bytes,
-            content_type="application/pdf"
+            content_type=content_type
         ))
         
         # 2. Upload extracted text
@@ -146,9 +153,9 @@ class DocumentStorage:
         content = await asyncio.to_thread(blob.download_as_bytes)
         return content.decode('utf-8')
     
-    async def fetch_pdf(self, doc_uuid: str) -> bytes:
-        """Fetch original PDF from GCS"""
-        path = f"{doc_uuid}/document.pdf"
+    async def fetch_original_file(self, doc_uuid: str, file_type: str = "pdf") -> bytes:
+        """Fetch original file from GCS (stored as 'original' without extension)"""
+        path = f"{doc_uuid}/original"
         blob = self.bucket.blob(path)
         return await asyncio.to_thread(blob.download_as_bytes)
     

@@ -30,17 +30,20 @@ class VectorDB:
     
     async def connect(self):
         """Initialize connection pool"""
+        async def init_connection(conn):
+            """Register vector type for each new connection in the pool"""
+            await register_vector(conn)
+        
         self.pool = await asyncpg.create_pool(
             self.connection_string,
             min_size=1,
             max_size=10,
+            init=init_connection,  # Register vector type for EVERY connection
         )
         
-        # Enable pgvector extension FIRST
+        # Enable pgvector extension (one-time setup)
         async with self.pool.acquire() as conn:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            # Then register the vector type
-            await register_vector(conn)
         
         print(f"Connected to PostgreSQL: {self.connection_string.split('@')[1]}")
     
@@ -207,7 +210,7 @@ class VectorDB:
                     "doc_uuid": str(row["doc_uuid"]),
                     "filename": row["filename"],
                     "file_type": row["file_type"],
-                    "doc_metadata": row["doc_metadata"],
+                    "doc_metadata": json.loads(row["doc_metadata"]) if isinstance(row["doc_metadata"], str) else row["doc_metadata"],
                     "similarity": float(row["similarity"]),
                 }
                 for row in rows

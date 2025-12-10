@@ -17,6 +17,7 @@ import asyncio
 import os
 import warnings
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import List, Optional
 
 # Suppress vertexai deprecation warning - we're using the recommended API
@@ -37,6 +38,10 @@ PROJECT_ID = os.getenv("GCP_PROJECT_ID", "your-project-id")
 LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 PORT = int(os.getenv("PORT", "8080"))
 GCS_BUCKET = os.getenv("GCS_BUCKET", "raglab-documents")
+
+# Version tracking
+APP_VERSION = "0.2.0"
+APP_START_TIME = datetime.utcnow().isoformat() + "Z"
 
 # Initialize storage with env bucket
 document_storage = DocumentStorage(bucket_name=GCS_BUCKET)
@@ -82,7 +87,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="RAG Lab API",
     description="Production RAG-as-a-Service with Vertex AI",
-    version="0.1.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -101,6 +106,9 @@ class HealthResponse(BaseModel):
     status: str
     project_id: str
     location: str
+    version: str
+    started_at: str
+    uptime_seconds: float
 
 
 class EmbeddingRequest(BaseModel):
@@ -117,9 +125,20 @@ class QueryRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20, description="Number of results")
 
 
+class QueryResultItem(BaseModel):
+    chunk_text: str
+    similarity: float
+    chunk_index: int
+    filename: str
+    original_doc_id: int
+    doc_uuid: str
+    doc_metadata: dict
+    download_url: Optional[str] = None
+
+
 class QueryResponse(BaseModel):
     query: str
-    results: List[dict]
+    results: List[QueryResultItem]
     total: int
 
 
@@ -131,13 +150,35 @@ class DocumentUploadResponse(BaseModel):
     message: str
 
 
+class DocumentDeleteResponse(BaseModel):
+    doc_id: int
+    filename: str
+    chunks_deleted: int
+    message: str
+
+
+class DocumentInfo(BaseModel):
+    doc_id: int
+    doc_uuid: str
+    filename: str
+    file_type: str
+    file_size: int
+    chunk_count: int
+    uploaded_at: str
+
+
+class DocumentListResponse(BaseModel):
+    total: int
+    documents: List[DocumentInfo]
+
+
 # Routes
 @app.get("/", response_model=dict)
 async def root():
     """Root endpoint"""
     return {
         "service": "RAG Lab API",
-        "version": "0.1.0",
+        "version": APP_VERSION,
         "status": "running",
         "docs": "/docs",
     }
@@ -146,10 +187,16 @@ async def root():
 @app.get("/health", response_model=HealthResponse)
 async def health():
     """Health check endpoint for Cloud Run"""
+    start_time = datetime.fromisoformat(APP_START_TIME.rstrip('Z'))
+    uptime = (datetime.utcnow() - start_time).total_seconds()
+    
     return HealthResponse(
         status="healthy",
         project_id=PROJECT_ID,
         location=LOCATION,
+        version=APP_VERSION,
+        started_at=APP_START_TIME,
+        uptime_seconds=round(uptime, 2),
     )
 
 
@@ -264,7 +311,8 @@ async def upload_document(file: UploadFile = File(...)):
                 doc_uuid=doc_uuid,
                 pdf_bytes=file_content,
                 extracted_text=extracted_text,
-                chunks=gcs_chunks
+                chunks=gcs_chunks,
+                file_type=file_type
             )
             print(f"Uploaded {len(gcs_chunks)} files to GCS: {doc_uuid}/")
             
@@ -407,17 +455,19 @@ async def query_rag(request: QueryRequest):
         ], return_exceptions=True)
         
         # Format final response
+        # Note: download_url can be obtained separately via GET /v1/documents/{doc_id}/download
         formatted_results = []
         for result in results:
-            formatted_results.append({
-                "chunk_text": result["chunk_text"],
-                "similarity": result["similarity"],
-                "chunk_index": result["chunk_index"],
-                "filename": result["filename"],
-                "original_doc_id": result["original_doc_id"],
-                "doc_uuid": result["doc_uuid"],
-                "doc_metadata": result["doc_metadata"],
-            })
+            formatted_results.append(QueryResultItem(
+                chunk_text=result["chunk_text"],
+                similarity=result["similarity"],
+                chunk_index=result["chunk_index"],
+                filename=result["filename"],
+                original_doc_id=result["original_doc_id"],
+                doc_uuid=result["doc_uuid"],
+                doc_metadata=result["doc_metadata"],
+                download_url=None,  # Use separate endpoint for signed URLs
+            ))
         
         return QueryResponse(
             query=request.query,
@@ -431,6 +481,157 @@ async def query_rag(request: QueryRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Query failed: {str(e)}",
+        )
+
+
+@app.get("/v1/documents/{doc_id}/download")
+async def download_document(doc_id: int):
+    """
+    Download original document directly
+    
+    Returns the original file (PDF/TXT) from GCS.
+    
+    Example:
+        GET /v1/documents/1/download
+    """
+    try:
+        from fastapi.responses import Response
+        
+        # Get document info
+        doc_info = await vector_db.get_original_document(doc_id)
+        if not doc_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with id {doc_id} not found",
+            )
+        
+        doc_uuid = doc_info["doc_uuid"]
+        filename = doc_info["filename"]
+        file_type = doc_info["file_type"]
+        
+        # Fetch from GCS (always stored as 'original')
+        content = await document_storage.fetch_original_file(doc_uuid, file_type="pdf")
+        
+        # Determine media type from stored file_type
+        if "pdf" in file_type.lower():
+            media_type = "application/pdf"
+        else:
+            media_type = "text/plain"
+        
+        # Return file with proper headers
+        # RFC 5987 encoding for non-ASCII filenames
+        from urllib.parse import quote
+        encoded_filename = quote(filename)
+        
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download document: {str(e)}",
+        )
+
+
+@app.get("/v1/documents", response_model=DocumentListResponse)
+async def list_documents():
+    """
+    List all documents in the system
+    
+    Returns metadata for all uploaded documents.
+    
+    Example:
+        GET /v1/documents
+    """
+    try:
+        async with vector_db.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT 
+                    id, doc_uuid, filename, file_type, file_size, 
+                    chunk_count, uploaded_at
+                FROM original_documents
+                ORDER BY uploaded_at DESC
+            """)
+        
+        documents = [
+            DocumentInfo(
+                doc_id=row["id"],
+                doc_uuid=str(row["doc_uuid"]),
+                filename=row["filename"],
+                file_type=row["file_type"],
+                file_size=row["file_size"],
+                chunk_count=row["chunk_count"],
+                uploaded_at=row["uploaded_at"].isoformat(),
+            )
+            for row in rows
+        ]
+        
+        return DocumentListResponse(
+            total=len(documents),
+            documents=documents,
+        )
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list documents: {str(e)}",
+        )
+
+
+@app.delete("/v1/documents/{doc_id}", response_model=DocumentDeleteResponse)
+async def delete_document(doc_id: int):
+    """
+    Delete document and all its chunks
+    
+    Removes from both PostgreSQL and GCS storage.
+    
+    Example:
+        DELETE /v1/documents/1
+    """
+    try:
+        # Get document info before deletion
+        doc_info = await vector_db.get_original_document(doc_id)
+        if not doc_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with id {doc_id} not found",
+            )
+        
+        filename = doc_info["filename"]
+        doc_uuid = doc_info["doc_uuid"]
+        chunk_count = doc_info["chunk_count"]
+        
+        # Delete from GCS
+        try:
+            await document_storage.delete_document(doc_uuid)
+            print(f"Deleted GCS files for {doc_uuid}")
+        except Exception as e:
+            print(f"Warning: GCS deletion failed for {doc_uuid}: {e}")
+            # Continue with DB deletion even if GCS fails
+        
+        # Delete from database (cascades to chunks)
+        await vector_db.delete_document(doc_id)
+        
+        return DocumentDeleteResponse(
+            doc_id=doc_id,
+            filename=filename,
+            chunks_deleted=chunk_count,
+            message=f"Document '{filename}' deleted successfully ({chunk_count} chunks removed)",
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Document deletion failed: {str(e)}",
         )
 
 
