@@ -47,7 +47,7 @@ class DocumentProcessor:
         
         # Initialize embedding model based on provider
         if embedding_provider == EmbeddingProvider.VERTEX_AI:
-            self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-004")
+            self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
             self.embedding_dimension = 768
         elif embedding_provider == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             # Lazy import to avoid dependency if not used

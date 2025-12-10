@@ -244,7 +244,7 @@ curl -X POST http://localhost:8080/v1/documents/upload \
 4. If new: Extract text (PyMuPDF for PDF, UTF-8 decode for TXT)
 5. Create database record → get UUID
 6. Chunk text (500 chars, 50 overlap)
-7. Generate embeddings (Vertex AI text-embedding-004, 768 dimensions)
+7. Generate embeddings (Vertex AI text-embedding-005, 768 dimensions)
 8. Upload to GCS in parallel: file + extracted text + all chunk JSONs
 9. Store embeddings + file_hash in PostgreSQL
 10. Update chunk count in database
@@ -309,7 +309,7 @@ curl -X POST http://localhost:8080/v1/embed \
 }
 ```
 
-**Model:** Vertex AI text-embedding-004 (768 dimensions, stable GA)
+**Model:** Vertex AI text-embedding-005 (768 dimensions)
 
 ### `GET /health`
 
@@ -450,14 +450,18 @@ DATABASE_URL=postgresql://raglab:password@localhost:5432/raglab
 
 **Embeddings (Pluggable Providers)**
 
-**Current:** Vertex AI text-embedding-004 (768 dimensions, stable GA model)
+**Current:** Vertex AI text-embedding-005 (768 dimensions)
 
-**Why text-embedding-004?** We use the stable GA (General Availability) model instead of text-embedding-005 to avoid regional API inconsistencies. In testing, text-embedding-005 returned 768 dimensions instead of documented 1408 in some regions.
+**Why text-embedding-005?** Specialized model for English and code tasks with excellent performance. Using 768 dimensions provides good quality while keeping storage costs reasonable.
 
 **Alternatives:**
-- text-embedding-005 (1408 dimensions) - newer specialized model for English/code, but may have regional API issues
-- gemini-embedding-001 (up to 3072 dimensions) - latest unified model, superior quality
+- gemini-embedding-001 (up to 3072 dimensions) - latest unified model, superior quality, supports multilingual
+- text-embedding-004 (768 dimensions) - older stable model
 - sentence-transformers (local, 384 dimensions) - 100% portable, no API costs
+
+**To upgrade to gemini-embedding-001:**
+- Same 768 dimensions: drop-in replacement, no schema changes needed
+- Higher dimensions (1024-3072): better quality, requires recreating vector tables and re-embedding all documents
 
 **To switch providers:**
 1. Update embedding model in `document_processor.py` and `main.py`
@@ -667,7 +671,7 @@ cd deployment
 - Automated GCP infrastructure setup
 - Cloud Run deployment scripts
 - Test fixtures for integration testing
-- Vertex AI embeddings: text-embedding-004 (768 dimensions, stable GA)
+- Vertex AI embeddings: text-embedding-005 (768 dimensions)
 
 ## Roadmap
 

@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize Vertex AI
     print(f"Initializing Vertex AI (project={PROJECT_ID}, location={LOCATION})...")
     vertexai.init(project=PROJECT_ID, location=LOCATION)
-    text_embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-004")
+    text_embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
     print("Vertex AI initialized successfully")
     
     # Initialize database
