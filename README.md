@@ -309,7 +309,7 @@ curl -X POST http://localhost:8080/v1/embed \
 }
 ```
 
-**Model:** Vertex AI text-embedding-004 (768 dimensions)
+**Model:** Vertex AI text-embedding-004 (768 dimensions, stable GA)
 
 ### `GET /health`
 
@@ -448,12 +448,15 @@ DATABASE_URL=postgresql://raglab:password@localhost:5432/raglab
 - Azure: Azure Database for PostgreSQL
 - Self-hosted: Any PostgreSQL 12+ with pgvector extension
 
-### Embeddings (Pluggable Providers)
+**Embeddings (Pluggable Providers)**
 
-**Current:** Vertex AI text-embedding-004 (768 dimensions)
+**Current:** Vertex AI text-embedding-004 (768 dimensions, stable GA model)
+
+**Why text-embedding-004?** We use the stable GA (General Availability) model instead of text-embedding-005 to avoid regional API inconsistencies. In testing, text-embedding-005 returned 768 dimensions instead of documented 1408 in some regions.
 
 **Alternatives:**
-- text-embedding-005 (1408 dimensions) - higher quality but may have regional limitations
+- text-embedding-005 (1408 dimensions) - newer specialized model for English/code, but may have regional API issues
+- gemini-embedding-001 (up to 3072 dimensions) - latest unified model, superior quality
 - sentence-transformers (local, 384 dimensions) - 100% portable, no API costs
 
 **To switch providers:**
@@ -664,7 +667,7 @@ cd deployment
 - Automated GCP infrastructure setup
 - Cloud Run deployment scripts
 - Test fixtures for integration testing
-- text-embedding-004 (768 dimensions)
+- Vertex AI embeddings: text-embedding-004 (768 dimensions, stable GA)
 
 ## Roadmap
 
