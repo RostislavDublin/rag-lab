@@ -176,9 +176,12 @@ class DocumentProcessor:
             List of embedding vectors
         """
         if self.embedding_provider == EmbeddingProvider.VERTEX_AI:
-            # Vertex AI batch processing
-            embeddings = self.embedding_model.get_embeddings(texts)
-            return [emb.values for emb in embeddings]
+            # Process each chunk individually to avoid token limits
+            embeddings = []
+            for text in texts:
+                emb = self.embedding_model.get_embeddings([text])
+                embeddings.append(emb[0].values)
+            return embeddings
         
         elif self.embedding_provider == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             # Local model

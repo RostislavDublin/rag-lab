@@ -55,12 +55,12 @@ def cleanup_before_tests(gcs_client):
 
 @pytest.fixture(scope="module")
 def test_documents():
-    """Test document paths - using Google whitepapers samples"""
+    """Test document paths - using full Google whitepapers"""
     fixtures_dir = Path(__file__).parent.parent / "fixtures" / "documents"
     return {
         "txt": fixtures_dir / "rag_architecture_guide.txt",
-        "pdf": fixtures_dir / "google_mcp_sample.pdf",
-        "pdf_quality": fixtures_dir / "google_agent_quality_sample.pdf"
+        "pdf": fixtures_dir / "google_agent_quality.pdf",
+        "pdf_context": fixtures_dir / "google_context_engineering.pdf"
     }
 
 
