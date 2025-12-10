@@ -1,0 +1,162 @@
+# Google Cloud Platform Services Overview
+
+## Compute Services
+
+### Cloud Run
+Cloud Run is a fully managed serverless platform for running containerized applications. Key features:
+- **Automatic Scaling**: Scale from zero to thousands of instances
+- **Pay-per-use**: Only pay when requests are being handled
+- **Container-based**: Deploy any language or framework
+- **HTTPS endpoints**: Automatic SSL certificates
+- **Cold start**: ~1-3 seconds for lightweight containers
+
+Pricing: $0.00002400 per vCPU-second, $0.00000250 per GiB-second
+
+### Cloud Functions
+Event-driven serverless functions for lightweight workloads:
+- Supports Node.js, Python, Go, Java, Ruby, PHP
+- Triggered by HTTP, Pub/Sub, Cloud Storage events
+- Maximum execution time: 60 minutes (2nd gen)
+- Ideal for: webhooks, data processing, IoT backends
+
+### Google Kubernetes Engine (GKE)
+Managed Kubernetes service for container orchestration:
+- Standard mode: managed control plane
+- Autopilot mode: fully managed nodes
+- Integration with Cloud Monitoring and Logging
+- Binary authorization for security
+
+## Storage Services
+
+### Cloud SQL
+Fully managed relational databases:
+- **PostgreSQL**: Version 12, 13, 14, 15, 16 supported
+- **MySQL**: Version 5.7, 8.0 supported
+- **SQL Server**: 2017, 2019, 2022 supported
+- High availability with automatic failover
+- Automated backups and point-in-time recovery
+- pgvector extension available for PostgreSQL
+
+Typical pricing: $0.0150/hour for db-f1-micro (shared CPU, 0.6GB RAM)
+
+### Cloud Storage (GCS)
+Object storage for any amount of data:
+- **Standard**: Hot data, frequently accessed
+- **Nearline**: Accessed less than once per month
+- **Coldline**: Accessed less than once per quarter
+- **Archive**: Long-term storage, accessed less than once per year
+
+Standard storage: $0.020 per GB/month in us-central1
+
+### Cloud Firestore
+NoSQL document database:
+- Real-time synchronization
+- Offline support
+- ACID transactions
+- Automatic multi-region replication
+
+## AI/ML Services
+
+### Vertex AI
+Unified AI platform with:
+- **AutoML**: Train custom models without code
+- **Vertex AI Workbench**: Managed Jupyter notebooks
+- **Model Garden**: Pre-trained models
+- **Prediction endpoints**: Deploy models with auto-scaling
+- **Vector Search**: Billion-scale similarity search
+
+### Gemini API
+Google's multimodal AI models:
+- Gemini 1.5 Pro: 1M token context window
+- Gemini 1.5 Flash: Fast and efficient
+- Gemini 2.0 Flash: Latest model with native tool use
+- Native multimodal: text, images, video, audio
+
+Pricing (Gemini 1.5 Flash):
+- Input: $0.075 per 1M tokens
+- Output: $0.30 per 1M tokens
+
+### Text Embedding Models
+Convert text to vectors:
+- text-embedding-005: 1408 dimensions, best quality
+- text-embedding-004: 768 dimensions, legacy
+- multimodalembedding: images + text
+
+Pricing: $0.025 per 1M tokens
+
+## Networking
+
+### Cloud Load Balancing
+Global load balancing with:
+- HTTP(S) Load Balancing
+- TCP/SSL Proxy Load Balancing
+- Network Load Balancing
+- Anycast IP addresses
+
+### Cloud CDN
+Content delivery network:
+- Cache static content at edge locations
+- Integrated with Cloud Storage and Cloud Run
+- Cache-to-cache filling
+- Pricing: $0.08-0.20 per GB depending on region
+
+## Security
+
+### Cloud IAM
+Identity and Access Management:
+- Fine-grained access control
+- Service accounts for applications
+- Workload Identity for GKE
+- Policy inheritance
+
+### Secret Manager
+Store API keys, passwords, certificates:
+- Automatic rotation
+- Versioning
+- Audit logging
+- Integration with Cloud Run, Cloud Functions
+
+## Monitoring & Operations
+
+### Cloud Monitoring
+Full-stack monitoring:
+- Infrastructure metrics
+- Application metrics
+- Custom metrics
+- Uptime checks
+- Alerting policies
+
+### Cloud Logging
+Centralized logging:
+- Real-time log management
+- Log-based metrics
+- Log exports to BigQuery
+- 30-day default retention
+
+## Best Practices for Cost Optimization
+
+1. **Use Cloud Run for stateless services** - pay only for actual usage
+2. **Choose appropriate storage classes** - move old data to Nearline/Coldline
+3. **Enable committed use discounts** - save up to 57% for predictable workloads
+4. **Use preemptible instances** - save up to 80% for fault-tolerant workloads
+5. **Monitor with budgets and alerts** - avoid unexpected costs
+6. **Use same region for all resources** - avoid egress charges
+7. **Delete unused resources** - clean up test environments regularly
+
+## Regional Considerations
+
+### US Regions
+- us-central1 (Iowa): Lowest price, good connectivity
+- us-east1 (South Carolina): Close to East Coast
+- us-west1 (Oregon): West Coast, renewable energy
+
+### Europe Regions
+- europe-west1 (Belgium): Lowest latency for Europe
+- europe-west4 (Netherlands): Carbon-neutral
+
+### Asia Regions
+- asia-northeast1 (Tokyo): Lowest latency for Japan
+- asia-southeast1 (Singapore): Southeast Asia hub
+
+Network egress within same region: $0 (free)
+Network egress between regions: $0.01-0.08 per GB

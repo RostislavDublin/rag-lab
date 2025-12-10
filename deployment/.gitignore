@@ -1,0 +1,4 @@
+# Deployment secrets
+.env.deploy
+service-account-key.json
+credentials.txt

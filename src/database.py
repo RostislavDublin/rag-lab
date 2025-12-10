@@ -5,6 +5,9 @@ This module provides vector storage and similarity search using PostgreSQL.
 Multi-cloud portable - works on GCP Cloud SQL, AWS RDS, Azure Database for PostgreSQL.
 """
 
+import hashlib
+import hashlib
+import json
 import os
 from typing import List, Optional, Tuple
 
@@ -17,10 +20,13 @@ class VectorDB:
     
     def __init__(self):
         self.pool: Optional[asyncpg.Pool] = None
-        self.connection_string = os.getenv(
+        # Get DATABASE_URL and clean it for asyncpg (remove +asyncpg suffix)
+        db_url = os.getenv(
             "DATABASE_URL",
             "postgresql://user:password@localhost:5432/raglab"
         )
+        # asyncpg doesn't understand 'postgresql+asyncpg://', only 'postgresql://'
+        self.connection_string = db_url.replace("postgresql+asyncpg://", "postgresql://")
     
     async def connect(self):
         """Initialize connection pool"""
@@ -30,8 +36,10 @@ class VectorDB:
             max_size=10,
         )
         
-        # Register pgvector type
+        # Enable pgvector extension FIRST
         async with self.pool.acquire() as conn:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            # Then register the vector type
             await register_vector(conn)
         
         print(f"Connected to PostgreSQL: {self.connection_string.split('@')[1]}")
@@ -56,6 +64,7 @@ class VectorDB:
                     filename TEXT NOT NULL,
                     file_type TEXT NOT NULL,
                     file_size INTEGER,
+                    file_hash TEXT UNIQUE NOT NULL,
                     chunk_count INTEGER DEFAULT 0,
                     metadata JSONB DEFAULT '{}',
                     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -67,7 +76,7 @@ class VectorDB:
                 CREATE TABLE IF NOT EXISTS document_chunks (
                     id SERIAL PRIMARY KEY,
                     original_doc_id INTEGER REFERENCES original_documents(id) ON DELETE CASCADE,
-                    embedding VECTOR(1408) NOT NULL,
+                    embedding VECTOR(768) NOT NULL,
                     chunk_index INTEGER NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(original_doc_id, chunk_index)
@@ -83,11 +92,31 @@ class VectorDB:
             
             print("Database schema initialized (GCS + UUID architecture)")
     
+    async def check_document_exists(self, file_hash: str) -> Optional[Tuple[int, str, str]]:
+        """
+        Check if document with given hash already exists
+        
+        Args:
+            file_hash: SHA256 hash of file content
+        
+        Returns:
+            Tuple of (doc_id, doc_uuid, filename) if exists, None otherwise
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, doc_uuid, filename FROM original_documents WHERE file_hash = $1",
+                file_hash
+            )
+            if row:
+                return row["id"], str(row["doc_uuid"]), row["filename"]
+            return None
+    
     async def insert_original_document(
         self,
         filename: str,
         file_type: str,
         file_size: int,
+        file_hash: str,
         metadata: Optional[dict] = None,
     ) -> Tuple[int, str]:
         """
@@ -100,14 +129,15 @@ class VectorDB:
             row = await conn.fetchrow(
                 """
                 INSERT INTO original_documents 
-                    (filename, file_type, file_size, metadata)
-                VALUES ($1, $2, $3, $4)
+                    (filename, file_type, file_size, file_hash, metadata)
+                VALUES ($1, $2, $3, $4, $5::jsonb)
                 RETURNING id, doc_uuid
                 """,
                 filename,
                 file_type,
                 file_size,
-                metadata or {},
+                file_hash,
+                json.dumps(metadata or {}),
             )
             return row["id"], str(row["doc_uuid"])
     

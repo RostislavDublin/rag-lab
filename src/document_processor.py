@@ -14,10 +14,14 @@ Architecture decision:
 """
 
 import os
+import warnings
 from typing import List, Tuple, Optional
 from enum import Enum
 
 import pymupdf  # PyMuPDF for PDF processing
+
+# Suppress vertexai deprecation warning - we're using the recommended API
+warnings.filterwarnings('ignore', message='.*deprecated as of June 24, 2025.*')
 from vertexai.language_models import TextEmbeddingModel
 
 
@@ -43,8 +47,8 @@ class DocumentProcessor:
         
         # Initialize embedding model based on provider
         if embedding_provider == EmbeddingProvider.VERTEX_AI:
-            self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
-            self.embedding_dimension = 1408
+            self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-004")
+            self.embedding_dimension = 768
         elif embedding_provider == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             # Lazy import to avoid dependency if not used
             from sentence_transformers import SentenceTransformer
@@ -77,6 +81,45 @@ class DocumentProcessor:
         
         doc.close()
         return text
+    
+    def extract_text_from_txt(self, txt_source) -> str:
+        """
+        Extract text from TXT file
+        
+        Args:
+            txt_source: Path to TXT file (str) or TXT bytes (bytes)
+        
+        Returns:
+            Text content
+        """
+        if isinstance(txt_source, bytes):
+            return txt_source.decode('utf-8')
+        else:
+            with open(txt_source, 'r', encoding='utf-8') as f:
+                return f.read()
+    
+    def extract_text(self, file_content: bytes, file_type: str) -> str:
+        """
+        Extract text from file based on type
+        
+        Args:
+            file_content: File content as bytes
+            file_type: File extension (.pdf, .txt) or MIME type
+        
+        Returns:
+            Extracted text
+        """
+        # Normalize file type
+        file_ext = file_type.lower()
+        if file_ext.startswith('.'):
+            file_ext = file_ext[1:]
+        
+        if file_ext in ('pdf', 'application/pdf'):
+            return self.extract_text_from_pdf(file_content)
+        elif file_ext in ('txt', 'text/plain'):
+            return self.extract_text_from_txt(file_content)
+        else:
+            raise ValueError(f"Unsupported file type: {file_type}")
     
     def chunk_text(self, text: str) -> List[Tuple[str, dict]]:
         """
@@ -147,23 +190,25 @@ class DocumentProcessor:
     
     async def process_document(
         self,
-        pdf_content: bytes,
+        file_content: bytes,
         filename: str = "unknown.pdf",
+        file_type: str = "pdf",
         metadata: Optional[dict] = None,
     ) -> List[Tuple[str, List[float], dict]]:
         """
         Full pipeline: extract → chunk → embed
         
         Args:
-            pdf_content: PDF file content as bytes
+            file_content: File content as bytes
             filename: Original filename for metadata
+            file_type: File extension (pdf, txt) or MIME type
             metadata: Additional metadata to attach
         
         Returns:
             List of (chunk_text, embedding, metadata) tuples
         """
-        # Extract text from PDF bytes
-        text = self.extract_text_from_pdf(pdf_content)
+        # Extract text based on file type
+        text = self.extract_text(file_content, file_type)
         
         # Chunk text
         chunks = self.chunk_text(text)

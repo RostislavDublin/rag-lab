@@ -1,0 +1,68 @@
+# RAG System Architecture Guide
+
+## What is RAG?
+
+Retrieval-Augmented Generation (RAG) is an AI framework that combines the power of large language models with external knowledge retrieval. Instead of relying solely on the model's training data, RAG systems retrieve relevant information from a knowledge base and use it to generate more accurate and up-to-date responses.
+
+## Key Components
+
+### 1. Document Storage
+RAG systems store documents in two parts:
+- **Vector Embeddings**: Numerical representations stored in a vector database (like PostgreSQL with pgvector)
+- **Original Content**: Full text stored in object storage (like Google Cloud Storage)
+
+### 2. Embedding Model
+The embedding model converts text into high-dimensional vectors. Common models include:
+- text-embedding-004 (768 dimensions)
+- text-embedding-005 (1408 dimensions) - latest and most accurate
+- OpenAI's text-embedding-3-large (3072 dimensions)
+
+### 3. Vector Search
+When a user queries the system, their question is embedded and compared against stored vectors using similarity metrics like cosine similarity or Euclidean distance.
+
+### 4. Generation
+Retrieved documents are provided as context to the LLM, which generates a response grounded in the retrieved information.
+
+## Benefits of RAG
+
+1. **Up-to-date Information**: Add new documents without retraining the model
+2. **Reduced Hallucinations**: Responses based on actual documents
+3. **Cost-Effective**: No need to fine-tune large models
+4. **Transparency**: Can show sources for each answer
+5. **Domain-Specific**: Easy to customize for specific industries
+
+## Best Practices
+
+### Chunking Strategy
+- Keep chunks between 200-500 tokens
+- Maintain semantic coherence
+- Add overlap between chunks (50-100 tokens)
+
+### Metadata Management
+- Store document metadata (title, author, date)
+- Enable filtering by metadata
+- Track chunk position in original document
+
+### Hybrid Search
+Combine vector search with keyword search for better results:
+- Vector search: semantic similarity
+- Keyword search: exact matches
+- Fusion: combine both results
+
+## Common Pitfalls
+
+1. **Chunk Size**: Too small loses context, too large loses precision
+2. **Top-K Selection**: Too few misses relevant info, too many adds noise
+3. **Embedding Model**: Using outdated or mismatched models
+4. **No Reranking**: Initial retrieval may not be optimal
+
+## Production Considerations
+
+- **Latency**: Vector search adds 100-500ms
+- **Cost**: Embedding API calls can be expensive at scale
+- **Storage**: Vector databases require significant memory
+- **Updates**: Incremental updates more efficient than full rebuilds
+
+## Conclusion
+
+RAG is a powerful technique for building AI systems that need access to specific knowledge bases. By separating retrieval from generation, we get the best of both worlds: the reasoning capabilities of LLMs and the accuracy of knowledge bases.

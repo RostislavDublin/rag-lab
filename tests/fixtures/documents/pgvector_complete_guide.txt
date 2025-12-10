@@ -1,0 +1,345 @@
+# PostgreSQL pgvector Extension Guide
+
+## Introduction
+
+pgvector is an open-source PostgreSQL extension for vector similarity search. It enables storing and querying high-dimensional vectors efficiently, making it ideal for machine learning applications like RAG systems, recommendation engines, and semantic search.
+
+## Installation
+
+### On PostgreSQL
+```sql
+CREATE EXTENSION vector;
+```
+
+### On Cloud SQL for PostgreSQL
+The pgvector extension is available on PostgreSQL 15 and later. Enable it with:
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+### On Amazon RDS
+Available on PostgreSQL 12.12+, 13.8+, 14.5+, 15+.
+
+## Vector Data Type
+
+### Creating Vector Columns
+```sql
+CREATE TABLE items (
+    id SERIAL PRIMARY KEY,
+    embedding vector(1536)  -- OpenAI ada-002
+);
+
+-- For Vertex AI text-embedding-005
+CREATE TABLE documents (
+    id SERIAL PRIMARY KEY,
+    embedding vector(1408)
+);
+```
+
+### Inserting Vectors
+```python
+import asyncpg
+
+embedding = [0.1, 0.2, 0.3, ...]  # 1408 dimensions
+await conn.execute(
+    "INSERT INTO documents (embedding) VALUES ($1)",
+    embedding
+)
+```
+
+## Similarity Search
+
+### Distance Operators
+pgvector supports three distance metrics:
+
+1. **L2 Distance** (Euclidean): `<->`
+```sql
+SELECT id FROM items 
+ORDER BY embedding <-> '[0.1,0.2,0.3]' 
+LIMIT 10;
+```
+
+2. **Cosine Distance**: `<=>`
+```sql
+SELECT id FROM items 
+ORDER BY embedding <=> '[0.1,0.2,0.3]' 
+LIMIT 10;
+```
+
+3. **Inner Product**: `<#>`
+```sql
+SELECT id FROM items 
+ORDER BY embedding <#> '[0.1,0.2,0.3]' 
+LIMIT 10;
+```
+
+### Which Distance to Use?
+
+- **Cosine Distance**: Best for normalized embeddings (most common)
+- **L2 Distance**: When magnitude matters
+- **Inner Product**: For dot product similarity
+
+## Indexing
+
+### IVFFlat Index
+Inverted file with flat vectors - good balance of speed and recall:
+
+```sql
+CREATE INDEX ON items 
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+```
+
+**Parameters:**
+- `lists`: Number of clusters (rule of thumb: rows/1000)
+- More lists = faster search, lower recall
+- Less lists = slower search, higher recall
+
+### HNSW Index
+Hierarchical Navigable Small World - better recall, more memory:
+
+```sql
+CREATE INDEX ON items 
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+```
+
+**Parameters:**
+- `m`: Maximum connections per layer (16-32 typical)
+- `ef_construction`: Size of dynamic candidate list (64-200)
+- Higher values = better recall, slower build
+
+### Index Types by Distance
+
+```sql
+-- For cosine distance
+vector_cosine_ops
+
+-- For L2 distance  
+vector_l2_ops
+
+-- For inner product
+vector_ip_ops
+```
+
+## Query Optimization
+
+### Exact vs Approximate Search
+```sql
+-- Exact search (slow, accurate)
+SELECT id FROM items 
+ORDER BY embedding <=> $1 
+LIMIT 10;
+
+-- Approximate search with index (fast)
+SET ivfflat.probes = 10;  -- Search 10 clusters
+SELECT id FROM items 
+ORDER BY embedding <=> $1 
+LIMIT 10;
+```
+
+### Tuning IVFFlat
+```sql
+-- More probes = better recall, slower query
+SET ivfflat.probes = 10;  -- Default is 1
+
+-- Benchmark different values
+EXPLAIN ANALYZE
+SELECT id FROM items 
+ORDER BY embedding <=> $1 
+LIMIT 10;
+```
+
+### Tuning HNSW
+```sql
+-- Increase ef_search for better recall
+SET hnsw.ef_search = 100;  -- Default is 40
+```
+
+## Performance Considerations
+
+### Index Build Time
+- IVFFlat: O(n) - fast build
+- HNSW: O(n log n) - slower build but better query performance
+
+### Memory Usage
+- IVFFlat: ~4 bytes per dimension per vector
+- HNSW: ~8-12 bytes per dimension per vector
+
+### Recommended Index for Scale
+- < 1M vectors: HNSW with default parameters
+- 1M - 10M vectors: IVFFlat with lists = rows/1000
+- > 10M vectors: Consider partitioning or dedicated vector DB
+
+## Hybrid Search
+
+### Combining Vector and Keyword Search
+```sql
+SELECT 
+    id,
+    content,
+    embedding <=> $1 as distance,
+    ts_rank(to_tsvector('english', content), query) as rank
+FROM documents, 
+     to_tsquery('english', 'machine & learning') as query
+WHERE to_tsvector('english', content) @@ query
+ORDER BY (0.7 * (1 - distance)) + (0.3 * rank) DESC
+LIMIT 10;
+```
+
+## Partitioning for Scale
+
+### By Document Type
+```sql
+CREATE TABLE embeddings (
+    id SERIAL,
+    doc_type TEXT,
+    embedding vector(1408)
+) PARTITION BY LIST (doc_type);
+
+CREATE TABLE embeddings_pdf 
+PARTITION OF embeddings FOR VALUES IN ('pdf');
+
+CREATE TABLE embeddings_web 
+PARTITION OF embeddings FOR VALUES IN ('web');
+```
+
+## Best Practices
+
+### 1. Normalize Embeddings
+For cosine distance, normalize vectors to unit length:
+```python
+import numpy as np
+
+def normalize(vec):
+    return vec / np.linalg.norm(vec)
+
+embedding = normalize(embedding)
+```
+
+### 2. Batch Inserts
+```python
+embeddings = [(id1, vec1), (id2, vec2), ...]
+await conn.executemany(
+    "INSERT INTO items (id, embedding) VALUES ($1, $2)",
+    embeddings
+)
+```
+
+### 3. Create Index After Bulk Insert
+```sql
+-- Insert data first
+INSERT INTO items (embedding) SELECT ...;
+
+-- Then create index
+CREATE INDEX ON items USING ivfflat (embedding vector_cosine_ops);
+```
+
+### 4. Monitor Index Usage
+```sql
+SELECT 
+    schemaname,
+    tablename,
+    indexname,
+    idx_scan,
+    idx_tup_read
+FROM pg_stat_user_indexes 
+WHERE indexname LIKE '%embedding%';
+```
+
+### 5. Vacuum Regularly
+```sql
+VACUUM ANALYZE items;
+```
+
+## Limitations
+
+### Maximum Dimensions
+- Current limit: 16,000 dimensions
+- Practical limit: 2,048 for good performance
+
+### Index Size
+IVFFlat index on 1M vectors (1408-dim):
+- Storage: ~5.6 GB
+- Memory: Similar
+
+### Query Performance
+- Without index: O(n) - scans all rows
+- With IVFFlat: O(√n) - scans subset of clusters
+- With HNSW: O(log n) - hierarchical navigation
+
+## Migration from Other Vector DBs
+
+### From Pinecone
+```python
+# Pinecone query
+results = index.query(vector, top_k=10)
+
+# pgvector equivalent
+results = await conn.fetch(
+    """
+    SELECT id, metadata
+    FROM items
+    ORDER BY embedding <=> $1
+    LIMIT 10
+    """,
+    vector
+)
+```
+
+### From Weaviate
+```python
+# Weaviate query
+results = client.query.get("Item").with_near_vector({
+    "vector": vector
+}).with_limit(10).do()
+
+# pgvector equivalent  
+results = await conn.fetch(
+    """
+    SELECT id, metadata
+    FROM items
+    ORDER BY embedding <=> $1
+    LIMIT 10
+    """,
+    vector
+)
+```
+
+## Monitoring
+
+### Check Index Health
+```sql
+SELECT 
+    pg_size_pretty(pg_relation_size('items_embedding_idx')) as index_size,
+    pg_size_pretty(pg_table_size('items')) as table_size;
+```
+
+### Query Statistics
+```sql
+SELECT 
+    query,
+    calls,
+    mean_exec_time,
+    stddev_exec_time
+FROM pg_stat_statements
+WHERE query LIKE '%embedding%<%>%'
+ORDER BY mean_exec_time DESC;
+```
+
+## Cloud SQL Specific
+
+### Enabling Extension
+```bash
+gcloud sql instances patch INSTANCE_NAME \
+  --database-flags=cloudsql.enable_pgvector=on
+```
+
+### Version Support
+- PostgreSQL 15: pgvector 0.4.4
+- PostgreSQL 16: pgvector 0.5.1
+- Check latest: `SELECT * FROM pg_available_extensions WHERE name = 'vector';`
+
+## Conclusion
+
+pgvector transforms PostgreSQL into a capable vector database for AI applications. For most applications up to 10M vectors, it provides excellent performance while keeping your data in a familiar RDBMS. For larger scales, consider dedicated vector databases or partitioning strategies.

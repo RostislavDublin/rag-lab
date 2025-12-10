@@ -15,9 +15,12 @@ Architecture:
 
 import asyncio
 import os
+import warnings
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
+# Suppress vertexai deprecation warning - we're using the recommended API
+warnings.filterwarnings('ignore', message='.*deprecated as of June 24, 2025.*')
 import vertexai
 from fastapi import FastAPI, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,7 +54,7 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize Vertex AI
     print(f"Initializing Vertex AI (project={PROJECT_ID}, location={LOCATION})...")
     vertexai.init(project=PROJECT_ID, location=LOCATION)
-    text_embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+    text_embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-004")
     print("Vertex AI initialized successfully")
     
     # Initialize database
@@ -153,13 +156,15 @@ async def health():
 @app.post("/v1/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(file: UploadFile = File(...)):
     """
-    Upload and process document (PDF)
+    Upload and process document (PDF or TXT)
     
     - Stores original file
     - Extracts text
     - Chunks content
     - Generates embeddings
     - Stores in two-level architecture (original + chunks)
+    
+    Supported formats: .pdf, .txt
     
     Example:
         POST /v1/documents/upload
@@ -168,11 +173,16 @@ async def upload_document(file: UploadFile = File(...)):
     """
     try:
         # Validate file type before reading
-        if not file.filename.lower().endswith('.pdf'):
+        filename_lower = file.filename.lower()
+        if not (filename_lower.endswith('.pdf') or filename_lower.endswith('.txt')):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only PDF files are supported"
+                detail="Only PDF and TXT files are supported"
             )
+        
+        # Determine file type
+        file_type = 'pdf' if filename_lower.endswith('.pdf') else 'txt'
+        content_type = 'application/pdf' if file_type == 'pdf' else 'text/plain'
         
         # Read file content
         file_content = await file.read()
@@ -185,20 +195,38 @@ async def upload_document(file: UploadFile = File(...)):
                 detail=f"File too large. Maximum size: {MAX_FILE_SIZE // (1024*1024)}MB"
             )
         
-        # Extract text from PDF
-        print(f"Processing document: {file.filename}")
-        extracted_text = document_processor.extract_text_from_pdf(file_content)
+        # Calculate file hash for deduplication
+        import hashlib
+        file_hash = hashlib.sha256(file_content).hexdigest()
+        
+        # Check if document already exists
+        existing = await vector_db.check_document_exists(file_hash)
+        if existing:
+            doc_id, doc_uuid, existing_filename = existing
+            print(f"Document already exists: ID={doc_id}, UUID={doc_uuid}, original={existing_filename}")
+            return DocumentUploadResponse(
+                doc_id=doc_id,
+                doc_uuid=doc_uuid,
+                filename=existing_filename,
+                chunks_created=0,
+                message=f"Document already exists (uploaded as '{existing_filename}'). Skipping duplicate."
+            )
+        
+        # Extract text from document
+        print(f"Processing document: {file.filename} ({file_type})")
+        extracted_text = document_processor.extract_text(file_content, file_type)
         
         if not extracted_text.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Could not extract text from PDF"
+                detail="Could not extract text from document"
             )
         
         # Process chunks and embeddings FIRST (before DB record)
         chunks_data = await document_processor.process_document(
-            pdf_content=file_content,
-            filename=file.filename
+            file_content=file_content,
+            filename=file.filename,
+            file_type=file_type
         )
         
         # Validate we got chunks
@@ -223,8 +251,9 @@ async def upload_document(file: UploadFile = File(...)):
         # Create DB record (generates UUID) - AFTER validation
         doc_id, doc_uuid = await vector_db.insert_original_document(
             filename=file.filename,
-            file_type="application/pdf",
+            file_type=content_type,
             file_size=len(file_content),
+            file_hash=file_hash,
             metadata={"original_filename": file.filename}
         )
         print(f"Created document record: ID={doc_id}, UUID={doc_uuid}")

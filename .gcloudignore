@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints
+notebooks/
+
+# Data files (will be in GCS)
+data/*
+!data/.gitkeep
+
+# Credentials
+service-account*.json
+*-key.json
+deployment/credentials.txt
+deployment/service-account-key.json
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Deployment scripts (not needed in container)
+deployment/
+experiments/
+docs/
+
+# Docker files
+.dockerignore
+docker-compose.yaml
+docker-compose.README.md
+
+# Tests
+tests/
