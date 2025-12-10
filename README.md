@@ -3,9 +3,11 @@
 Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Hybrid storage**: PostgreSQL for embeddings, GCS for documents (8.5x cheaper)
 - **UUID-based**: Globally unique, immutable document identifiers
+- **Deduplication**: SHA256 file hashing prevents duplicate uploads
+- **Multi-format support**: PDF and TXT files
 - **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
-- **Efficient chunking**: Separate JSON files for fast RAG queries
+- **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
 
 ## Architecture
 
@@ -38,11 +40,12 @@ original_documents                 document_chunks
 ─────────────────                 ────────────────
 id                                id
 doc_uuid (UUID) ◄─────────┐       original_doc_id (FK) ─┐
-filename                  │       embedding (VECTOR)    │
+filename                  │       embedding (VECTOR(768))│
 file_type                 │       chunk_index           │
 file_size                 │       created_at            │
-metadata                  │                             │
-chunk_count               │       CASCADE DELETE ◄──────┘
+file_hash (SHA256) UNIQUE │                             │
+metadata                  │       CASCADE DELETE ◄──────┘
+chunk_count               │
 uploaded_at               │
                           │
                           └── UNIQUE, globally unique identifier
@@ -67,29 +70,66 @@ gs://raglab-documents/
 - **Efficient RAG**: Fetch only needed chunks (3-5) not all 50
 - **Regeneration**: Keep extracted text for re-embedding without re-processing PDFs
 
-## Quick Start (Local Development)
+### Deduplication
 
-### 1. Prerequisites
+Documents are deduplicated using SHA256 file hashing:
 
+**How it works:**
+1. Calculate SHA256 hash of uploaded file content
+2. Check `original_documents.file_hash` (UNIQUE constraint)
+3. If duplicate found: return existing document info, skip processing
+4. If new: proceed with extraction, chunking, embedding
+
+**Benefits:**
+- Prevents wasted processing (no re-extraction, re-embedding)
+- Saves storage (no duplicate files in GCS)
+- Maintains referential integrity (same content = same UUID)
+- Fast check (indexed hash lookup)
+
+**Example:**
 ```bash
-# Install Docker & Docker Compose
-docker --version
-docker-compose --version
+# First upload
+curl -X POST http://localhost:8080/v1/documents/upload -F "file=@doc.pdf"
+# → Processes document, creates chunks
 
-# GCP credentials for Vertex AI + GCS
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json
-export GCP_PROJECT_ID=your-project-id
-
-# Create GCS bucket (same region as Cloud Run for $0 egress)
-gcloud storage buckets create gs://raglab-documents \
-  --location=us-central1 \
-  --uniform-bucket-level-access
-
-# Set environment variable
-export GCS_BUCKET=raglab-documents
+# Duplicate upload (same content, different filename)
+curl -X POST http://localhost:8080/v1/documents/upload -F "file=@doc_copy.pdf"
+# → Returns: "Document already exists (uploaded as 'doc.pdf'). Skipping duplicate."
 ```
 
-### 2. Start Services
+**Note:** Deduplication is content-based, not filename-based. Same content with different names = duplicate.
+
+## Quick Start (Local Development)
+
+### Option 1: Local Development with Cloud Infrastructure (Recommended)
+
+Fast iteration with Cloud SQL Proxy and hot reload:
+
+```bash
+# 1. Setup infrastructure (one-time)
+cd deployment
+cp .env.deploy.example .env.deploy
+# Edit .env.deploy with your GCP_PROJECT_ID and GCP_REGION
+
+# Create GCP resources (Cloud SQL, GCS, Service Account)
+python setup_infrastructure.py
+
+# 2. Start local development server
+python local_run.py
+
+# Server runs at http://localhost:8080 with hot reload
+# Connects to Cloud SQL via proxy
+# Uses real Vertex AI embeddings
+# Stores documents in GCS
+```
+
+**Benefits:**
+- Hot reload: code changes apply instantly
+- Real infrastructure: same as production
+- Fast iteration: no Docker builds
+- Cloud SQL Proxy: automatic connection
+
+### Option 2: Docker Compose (Fully Local)
 
 ```bash
 # Start PostgreSQL + API
@@ -102,7 +142,7 @@ docker-compose logs -f api
 docker-compose down
 ```
 
-### 3. Test API
+### Test API
 
 ```bash
 # Health check
@@ -111,6 +151,15 @@ curl http://localhost:8080/health
 # Upload PDF document
 curl -X POST http://localhost:8080/v1/documents/upload \
   -F "file=@sample.pdf"
+
+# Upload TXT document
+curl -X POST http://localhost:8080/v1/documents/upload \
+  -F "file=@document.txt"
+
+# Try uploading duplicate (will be rejected)
+curl -X POST http://localhost:8080/v1/documents/upload \
+  -F "file=@sample.pdf"
+# Response: "Document already exists... Skipping duplicate."
 
 # Query RAG system
 curl -X POST http://localhost:8080/v1/query \
@@ -126,19 +175,47 @@ curl -X POST http://localhost:8080/v1/embed \
   -d '{"text": "Hello world"}'
 ```
 
+### Test with Fixtures
+
+The repository includes 4 test documents (22.6KB total) for integration testing:
+
+```bash
+# Upload test documents
+for file in tests/fixtures/documents/*.txt; do
+  curl -X POST http://localhost:8080/v1/documents/upload \
+    -F "file=@$file"
+done
+
+# Test queries
+curl -X POST http://localhost:8080/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is RAG?", "top_k": 5}'
+
+curl -X POST http://localhost:8080/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "How does HNSW indexing work?", "top_k": 5}'
+```
+
 ## API Endpoints
 
 ### `POST /v1/documents/upload`
 
-Upload and process PDF document.
+Upload and process PDF or TXT document. Automatically detects and rejects duplicates.
+
+**Supported formats:** PDF, TXT
 
 **Request:**
 ```bash
+# PDF file
 curl -X POST http://localhost:8080/v1/documents/upload \
   -F "file=@document.pdf"
+
+# TXT file
+curl -X POST http://localhost:8080/v1/documents/upload \
+  -F "file=@document.txt"
 ```
 
-**Response:**
+**Response (new document):**
 ```json
 {
   "doc_id": 1,
@@ -149,14 +226,28 @@ curl -X POST http://localhost:8080/v1/documents/upload \
 }
 ```
 
+**Response (duplicate detected):**
+```json
+{
+  "doc_id": 1,
+  "doc_uuid": "550e8400-e29b-41d4-a716-446655440000",
+  "filename": "document.pdf",
+  "chunks_created": 0,
+  "message": "Document already exists (uploaded as 'document.pdf'). Skipping duplicate."
+}
+```
+
 **What happens:**
-1. Extract text from PDF (PyMuPDF)
-2. Create database record → get UUID
-3. Chunk text (500 chars, 50 overlap)
-4. Generate embeddings (Vertex AI text-embedding-005)
-5. Upload to GCS in parallel: PDF + extracted text + all chunk JSONs
-6. Store only embeddings in PostgreSQL
-7. Update chunk count in database
+1. Calculate SHA256 hash of file content
+2. Check database for existing hash (deduplication)
+3. If duplicate: return existing document info, skip processing
+4. If new: Extract text (PyMuPDF for PDF, UTF-8 decode for TXT)
+5. Create database record → get UUID
+6. Chunk text (500 chars, 50 overlap)
+7. Generate embeddings (Vertex AI text-embedding-004, 768 dimensions)
+8. Upload to GCS in parallel: file + extracted text + all chunk JSONs
+9. Store embeddings + file_hash in PostgreSQL
+10. Update chunk count in database
 
 ### `POST /v1/query`
 
@@ -214,9 +305,11 @@ curl -X POST http://localhost:8080/v1/embed \
 ```json
 {
   "embedding": [0.123, -0.456, ...],
-  "dimension": 1408
+  "dimension": 768
 }
 ```
+
+**Model:** Vertex AI text-embedding-004 (768 dimensions)
 
 ### `GET /health`
 
@@ -233,85 +326,87 @@ Health check for Cloud Run.
 
 ## Cloud Run Deployment
 
-### Prerequisites
+### Automated Setup (Recommended)
+
+Complete infrastructure setup and deployment using Python scripts:
 
 ```bash
-# Install gcloud CLI
-gcloud --version
+# 1. Configure deployment
+cd deployment
+cp .env.deploy.example .env.deploy
+# Edit .env.deploy with your settings:
+#   GCP_PROJECT_ID=your-project-id
+#   GCP_REGION=us-central1
+#   DEPLOYMENT_AUTH_MODE=gcloud
 
-# Authenticate
-gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
+# 2. Setup GCP infrastructure (one-time)
+# Creates: Cloud SQL, GCS bucket, Service Account, enables APIs
+python setup_infrastructure.py
 
-# Enable APIs
+# This creates:
+# - Cloud SQL PostgreSQL 15 with pgvector
+# - GCS bucket in same region ($0 egress)
+# - Service Account with IAM roles
+# - .env file with connection details
+# - deployment/credentials.txt with all info
+
+# 3. Deploy to Cloud Run
+python deploy_cloudrun.py
+
+# 4. Test deployment
+SERVICE_URL=$(gcloud run services describe rag-api --region us-central1 --format 'value(status.url)')
+curl $SERVICE_URL/health
+```
+
+### Manual Setup
+
+If you prefer manual control:
+
+```bash
+# 1. Enable APIs
 gcloud services enable \
   run.googleapis.com \
   cloudbuild.googleapis.com \
   sqladmin.googleapis.com \
+  storage.googleapis.com \
   aiplatform.googleapis.com
-```
 
-### 1. Create Cloud SQL PostgreSQL Instance
-
-```bash
-# Create instance with pgvector
-gcloud sql instances create raglab-db \
+# 2. Create Cloud SQL (takes 5-10 minutes)
+gcloud sql instances create rag-postgres \
   --database-version=POSTGRES_15 \
   --tier=db-f1-micro \
-  --region=us-central1
+  --region=us-central1 \
+  --no-backup
 
-# Create database
-gcloud sql databases create raglab --instance=raglab-db
+# 3. Create database and user
+gcloud sql databases create rag_db --instance=rag-postgres
+gcloud sql users create rag_user \
+  --instance=rag-postgres \
+  --password=YOUR_SECURE_PASSWORD
 
-# Create user
-gcloud sql users create raglab \
-  --instance=raglab-db \
-  --password=SECURE_PASSWORD
-```
-
-### 2. Create GCS Bucket (Same Region)
-
-```bash
-# Create bucket in same region for $0 egress
-gcloud storage buckets create gs://raglab-documents \
+# 4. Create GCS bucket (same region for $0 egress)
+gcloud storage buckets create gs://YOUR_PROJECT_ID-rag-documents \
   --location=us-central1 \
   --uniform-bucket-level-access
 
-# Grant Cloud Run service account access
-gcloud storage buckets add-iam-policy-binding gs://raglab-documents \
-  --member="serviceAccount:YOUR_SERVICE_ACCOUNT@YOUR_PROJECT.iam.gserviceaccount.com" \
-  --role="roles/storage.objectAdmin"
-```
-
-### 3. Deploy to Cloud Run
-
-```bash
-# Option 1: Use deployment script
-cd deployment
-chmod +x deploy-cloudrun.sh
-./deploy-cloudrun.sh
-
-# Option 2: Manual deployment
-gcloud run deploy raglab \
+# 5. Deploy
+gcloud run deploy rag-api \
   --source . \
   --region us-central1 \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars "GCP_PROJECT_ID=YOUR_PROJECT,GCS_BUCKET=raglab-documents,DATABASE_URL=postgresql://..."
+  --add-cloudsql-instances=PROJECT:REGION:rag-postgres \
+  --set-env-vars "GCP_PROJECT_ID=YOUR_PROJECT,GCS_BUCKET=YOUR_BUCKET,DATABASE_URL=postgresql://..."
 ```
 
-### 4. Test Deployment
+### Cleanup
+
+Remove all infrastructure when done:
 
 ```bash
-# Get service URL
-SERVICE_URL=$(gcloud run services describe raglab --region us-central1 --format 'value(status.url)')
-
-# Test health
-curl $SERVICE_URL/health
-
-# Upload document
-curl -X POST $SERVICE_URL/v1/documents/upload \
-  -F "file=@sample.pdf"
+cd deployment
+python teardown.py
+# Type 'DELETE-ALL' to confirm
 ```
 
 ## Configuration
@@ -355,20 +450,28 @@ DATABASE_URL=postgresql://raglab:password@localhost:5432/raglab
 
 ### Embeddings (Pluggable Providers)
 
-**Current:** Vertex AI text-embedding-005 (1408 dimensions)
+**Current:** Vertex AI text-embedding-004 (768 dimensions)
 
-**Alternative:** sentence-transformers (local, 384 dimensions)
+**Alternatives:**
+- text-embedding-005 (1408 dimensions) - higher quality but may have regional limitations
+- sentence-transformers (local, 384 dimensions) - 100% portable, no API costs
 
 **To switch providers:**
-1. Update `document_processor.py` initialization
-2. **Regenerate all embeddings** (different dimensions)
-3. Fetch extracted text from GCS to avoid re-processing PDFs
-4. Update embeddings in PostgreSQL
+1. Update embedding model in `document_processor.py` and `main.py`
+2. Update vector dimension in `database.py` schema
+3. **Regenerate all embeddings** (different dimensions require new vectors)
+4. Fetch extracted text from GCS to avoid re-processing files
+5. Update embeddings in PostgreSQL
 
 ```python
-# Change in src/main.py
-document_processor = DocumentProcessor(
-    provider=EmbeddingProvider.SENTENCE_TRANSFORMERS  # 100% portable
+# Change in src/main.py and src/document_processor.py
+self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+self.embedding_dimension = 1408
+
+# Update database.py
+CREATE TABLE document_chunks (
+    embedding VECTOR(1408) NOT NULL,  # Match new dimension
+    ...
 )
 
 # Regeneration workflow:
@@ -480,19 +583,31 @@ python scripts/test_api.py
 ```
 rag-lab/
 ├── src/
-│   ├── main.py              # FastAPI application (upload + query endpoints)
-│   ├── database.py          # PostgreSQL + pgvector (embeddings only)
-│   ├── storage.py           # Cloud Storage (documents + text + chunks)
-│   ├── document_processor.py # PDF to chunks to embeddings
+│   ├── main.py                    # FastAPI app (upload + query + deduplication)
+│   ├── database.py                # PostgreSQL + pgvector (embeddings + metadata)
+│   ├── storage.py                 # Cloud Storage (documents + text + chunks)
+│   ├── document_processor.py      # PDF/TXT → chunks → embeddings
 │   └── __init__.py
 ├── deployment/
-│   ├── deploy-cloudrun.sh   # Automated Cloud Run deployment
-│   ├── test-deployment.sh   # Test deployed service
-│   └── local-run.sh         # Run Docker container locally
-├── Dockerfile               # Multi-stage production build
-├── docker-compose.yaml      # Local development stack
-├── requirements.txt         # Python dependencies
-└── README.md               # This file
+│   ├── setup_infrastructure.py    # GCP resource provisioning (Python)
+│   ├── deploy_cloudrun.py         # Cloud Run deployment (Python)
+│   ├── local_run.py               # Local dev with Cloud SQL Proxy (Python)
+│   ├── teardown.py                # Infrastructure cleanup (Python)
+│   ├── .env.deploy.example        # Configuration template
+│   └── .gitignore                 # Ignore secrets
+├── tests/
+│   └── fixtures/
+│       └── documents/             # 4 test documents (22.6KB)
+│           ├── rag_architecture_guide.txt
+│           ├── gcp_services_overview.txt
+│           ├── fastapi_best_practices.txt
+│           ├── pgvector_complete_guide.txt
+│           └── README.md          # Test scenarios
+├── Dockerfile                     # Multi-stage production build
+├── .gcloudignore                  # Cloud Run deployment filter
+├── docker-compose.yaml            # Local development stack
+├── requirements.txt               # Python dependencies
+└── README.md                      # This file
 ```
 
 ## Troubleshooting
@@ -538,19 +653,34 @@ cd deployment
 ./deploy-cloudrun.sh
 ```
 
-## Next Steps
+## Features
 
+✅ **Implemented:**
+- Document upload (PDF, TXT)
+- SHA256 deduplication (prevents duplicate processing)
+- Vector similarity search
+- Hybrid storage (PostgreSQL + GCS)
+- Local development with Cloud SQL Proxy
+- Automated GCP infrastructure setup
+- Cloud Run deployment scripts
+- Test fixtures for integration testing
+- text-embedding-004 (768 dimensions)
+
+## Roadmap
+
+- [ ] Document listing endpoint: `GET /v1/documents` (list all with metadata)
 - [ ] Document download endpoint: `GET /v1/documents/{uuid}/download` (GCS signed URL)
 - [ ] Document deletion endpoint: `DELETE /v1/documents/{uuid}` (GCS + DB cleanup)
 - [ ] Add Gemini integration for answer generation
 - [ ] Implement authentication (API keys, OAuth)
-- [ ] Add rate limiting
-- [ ] Implement monitoring and logging
-- [ ] Add support for more file types (TXT, DOCX, etc.)
+- [ ] Add rate limiting (slowapi)
+- [ ] Enhanced monitoring and structured logging
+- [ ] Add support for DOCX, HTML, Markdown
 - [ ] Create Kubernetes manifests for GKE
-- [ ] Add comprehensive tests
-- [ ] Add search result ranking
-- [ ] Implement Redis caching for hot chunks (reduce GCS calls)
+- [ ] Comprehensive test suite (pytest)
+- [ ] Search result reranking
+- [ ] Redis caching for hot chunks (reduce GCS calls)
+- [ ] Metadata filtering in queries (by filename, date, type)
 
 ## License
 
