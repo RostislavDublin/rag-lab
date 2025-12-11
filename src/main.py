@@ -196,6 +196,20 @@ class DocumentListResponse(BaseModel):
     documents: List[DocumentInfo]
 
 
+class ChunkInfo(BaseModel):
+    chunk_index: int
+    chunk_text: str
+    start_char: Optional[int] = None
+    end_char: Optional[int] = None
+
+
+class DocumentChunksResponse(BaseModel):
+    doc_id: int
+    filename: str
+    total_chunks: int
+    chunks: List[ChunkInfo]
+
+
 # Routes
 @app.get("/", response_model=dict)
 async def root():
@@ -517,17 +531,30 @@ async def query_rag(request: QueryRequest):
 
 
 @app.get("/v1/documents/{doc_id}/download")
-async def download_document(doc_id: int):
+async def download_document(doc_id: int, format: str = "original"):
     """
-    Download original document directly
+    Download document in specified format
     
-    Returns the original file (PDF/TXT) from GCS.
+    Args:
+        doc_id: Document ID
+        format: Download format
+            - "original": Original uploaded file (PDF/TXT) [default]
+            - "extracted": Extracted text in Markdown format (from pymupdf4llm)
     
-    Example:
-        GET /v1/documents/1/download
+    Examples:
+        GET /v1/documents/1/download              # Original file
+        GET /v1/documents/1/download?format=original
+        GET /v1/documents/1/download?format=extracted  # Markdown text
     """
     try:
         from fastapi.responses import Response
+        
+        # Validate format parameter
+        if format not in ["original", "extracted"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid format '{format}'. Must be 'original' or 'extracted'",
+            )
         
         # Get document info
         doc_info = await vector_db.get_original_document(doc_id)
@@ -541,22 +568,34 @@ async def download_document(doc_id: int):
         filename = doc_info["filename"]
         file_type = doc_info["file_type"]
         
-        # Fetch from GCS (always stored as 'original')
-        content = await document_storage.fetch_original_file(doc_uuid, file_type="pdf")
-        
-        # Determine media type from stored file_type
-        if "pdf" in file_type.lower():
-            media_type = "application/pdf"
+        if format == "extracted":
+            # Fetch extracted text (Markdown from pymupdf4llm)
+            content = await document_storage.fetch_extracted_text(doc_uuid)
+            content_bytes = content.encode('utf-8')
+            media_type = "text/plain; charset=utf-8"
+            
+            # Generate filename: "document.pdf" -> "document_extracted.txt"
+            base_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+            download_filename = f"{base_name}_extracted.txt"
         else:
-            media_type = "text/plain"
+            # Fetch original file from GCS
+            content_bytes = await document_storage.fetch_original_file(doc_uuid, file_type="pdf")
+            
+            # Determine media type from stored file_type
+            if "pdf" in file_type.lower():
+                media_type = "application/pdf"
+            else:
+                media_type = "text/plain"
+            
+            download_filename = filename
         
         # Return file with proper headers
         # RFC 5987 encoding for non-ASCII filenames
         from urllib.parse import quote
-        encoded_filename = quote(filename)
+        encoded_filename = quote(download_filename)
         
         return Response(
-            content=content,
+            content=content_bytes,
             media_type=media_type,
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
@@ -569,6 +608,64 @@ async def download_document(doc_id: int):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to download document: {str(e)}",
+        )
+
+
+@app.get("/v1/documents/{doc_id}/chunks", response_model=DocumentChunksResponse)
+async def get_document_chunks(doc_id: int):
+    """
+    Get all chunks for a document in order
+    
+    Returns all chunks with their text and metadata in sequential order (0, 1, 2, ...).
+    Useful for:
+    - Verifying chunking pipeline integrity
+    - Comparing extracted text vs. concatenated chunks
+    - Testing that chunk ordering is preserved
+    
+    Example:
+        GET /v1/documents/72/chunks
+    """
+    try:
+        # Get document info
+        doc_info = await vector_db.get_original_document(doc_id)
+        if not doc_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with id {doc_id} not found",
+            )
+        
+        doc_uuid = doc_info["doc_uuid"]
+        filename = doc_info["filename"]
+        chunk_count = doc_info["chunk_count"]
+        
+        # Fetch all chunks in order
+        chunk_indices = list(range(chunk_count))
+        chunks_data = await document_storage.fetch_chunks_with_metadata(doc_uuid, chunk_indices)
+        
+        # Build response
+        chunks_info = []
+        for chunk_data in chunks_data:
+            metadata = chunk_data.get("metadata", {})
+            chunks_info.append(ChunkInfo(
+                chunk_index=chunk_data["index"],
+                chunk_text=chunk_data["text"],
+                start_char=metadata.get("start_char"),
+                end_char=metadata.get("end_char")
+            ))
+        
+        return DocumentChunksResponse(
+            doc_id=doc_id,
+            filename=filename,
+            total_chunks=chunk_count,
+            chunks=chunks_info
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch chunks: {str(e)}",
         )
 
 

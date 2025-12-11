@@ -20,7 +20,7 @@ from typing import List, Tuple, Optional
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 
-import pymupdf  # PyMuPDF for PDF processing
+import pymupdf4llm  # PyMuPDF4LLM for LLM-optimized PDF processing
 
 # Suppress vertexai deprecation warning - we're using the recommended API
 warnings.filterwarnings('ignore', message='.*deprecated as of June 24, 2025.*')
@@ -42,10 +42,12 @@ class DocumentProcessor:
         embedding_provider: EmbeddingProvider = EmbeddingProvider.VERTEX_AI,
         chunk_size: int = 2000,  # Balanced: good RAG quality + retry safety net
         chunk_overlap: int = 200,
+        max_input_tokens: Optional[int] = None,  # For testing: artificially limit token size to trigger splits
     ):
         self.embedding_provider = embedding_provider
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.max_input_tokens = max_input_tokens  # If set, will reject chunks larger than this (in tokens)
         
         # Initialize embedding model based on provider
         if embedding_provider == EmbeddingProvider.VERTEX_AI:
@@ -61,28 +63,31 @@ class DocumentProcessor:
     
     def extract_text_from_pdf(self, pdf_source) -> str:
         """
-        Extract text from PDF using PyMuPDF
+        Extract text from PDF using PyMuPDF4LLM (optimized for LLM/RAG)
+        
+        Converts PDF to Markdown format preserving:
+        - Document structure (headings, lists, tables)
+        - Text formatting (bold, italic, code)
+        - Proper reading order (multi-column support)
         
         Args:
             pdf_source: Path to PDF file (str) or PDF bytes (bytes)
         
         Returns:
-            Extracted text
+            Extracted text in Markdown format
         """
-        # Open PDF from path or bytes
+        # pymupdf4llm.to_markdown() accepts file path or PyMuPDF Document
         if isinstance(pdf_source, bytes):
+            # For bytes, we need to create a PyMuPDF Document first
+            import pymupdf
             doc = pymupdf.open(stream=pdf_source, filetype="pdf")
+            markdown_text = pymupdf4llm.to_markdown(doc)
+            doc.close()
         else:
-            doc = pymupdf.open(pdf_source)
+            # For file path, pymupdf4llm handles it directly
+            markdown_text = pymupdf4llm.to_markdown(pdf_source)
         
-        text = ""
-        
-        for page_num, page in enumerate(doc):
-            page_text = page.get_text()
-            text += f"\n--- Page {page_num + 1} ---\n{page_text}"
-        
-        doc.close()
-        return text
+        return markdown_text
     
     def extract_text_from_txt(self, txt_source) -> str:
         """
@@ -257,6 +262,13 @@ class DocumentProcessor:
                 raise ValueError(f"Chunk too small to split further (depth={depth})")
             
             try:
+                # Check artificial token limit for testing (if set)
+                if self.max_input_tokens is not None:
+                    estimated_tokens = len(text) // 4  # Rough estimate: 4 chars per token
+                    if estimated_tokens > self.max_input_tokens:
+                        # Simulate token limit error
+                        raise Exception(f"400 Token limit exceeded: {estimated_tokens} > {self.max_input_tokens}")
+                
                 # Try to get embedding (auto_truncate=False to catch errors)
                 emb = self.embedding_model.get_embeddings([text])
                 return [(text, emb[0].values)]
@@ -287,8 +299,15 @@ class DocumentProcessor:
                             break
                     
                     # Split and retry recursively
+                    # Important: Add overlap between split chunks to maintain continuity
+                    # Use same overlap as regular chunking (self.chunk_overlap)
+                    overlap = min(self.chunk_overlap, split_point // 4)  # Max 25% of first chunk
+                    
                     chunk1 = text[:split_point].strip()
-                    chunk2 = text[split_point:].strip()
+                    chunk2_start = max(0, split_point - overlap)
+                    chunk2 = text[chunk2_start:].strip()
+                    
+                    print(f"      Split with {overlap} char overlap for continuity")
                     
                     pairs1 = _get_embedding_with_retry(chunk1, depth + 1)
                     pairs2 = _get_embedding_with_retry(chunk2, depth + 1)
