@@ -38,3 +38,4 @@ pymupdf>=1.23.0  # PDF text extraction
 # Optional: LangChain integration
 # langchain>=0.1.0
 # langchain-google-vertexai>=0.1.0
+pymupdf_layout==1.26.6
