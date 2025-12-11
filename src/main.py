@@ -784,6 +784,118 @@ async def delete_document_by_hash(file_hash: str):
         )
 
 
+@app.get("/v1/documents/{doc_uuid}/chunks/{chunk_index}/context")
+async def get_chunk_context(
+    doc_uuid: str,
+    chunk_index: int,
+    before: int = 1,
+    after: int = 1,
+):
+    """
+    Get chunk with surrounding context, reconstructed from original text.
+    
+    Returns continuous text from chunk N-before to chunk N+after,
+    WITHOUT overlaps (uses start_char/end_char from original document).
+    
+    Example:
+        GET /v1/documents/{uuid}/chunks/5/context?before=2&after=2
+        
+        Returns chunks 3, 4, 5, 6, 7 as one continuous text block.
+    
+    Args:
+        doc_uuid: Document UUID
+        chunk_index: Target chunk index (0-based)
+        before: Number of chunks before target (default: 1)
+        after: Number of chunks after target (default: 1)
+    
+    Returns:
+        {
+            "doc_uuid": str,
+            "filename": str,
+            "target_chunk_index": int,
+            "context_range": [start_index, end_index],
+            "text": str,  # Continuous text without overlaps
+            "chunks_included": int
+        }
+    """
+    try:
+        # Validate parameters
+        if before < 0 or after < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="before and after must be >= 0"
+            )
+        
+        # Get document info
+        doc_info = await vector_db.get_document_by_uuid(doc_uuid)
+        if not doc_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document {doc_uuid} not found"
+            )
+        
+        chunk_count = doc_info["chunk_count"]
+        
+        # Validate chunk_index
+        if chunk_index < 0 or chunk_index >= chunk_count:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"chunk_index {chunk_index} out of range [0, {chunk_count-1}]"
+            )
+        
+        # Calculate range (clamped to document bounds)
+        start_idx = max(0, chunk_index - before)
+        end_idx = min(chunk_count - 1, chunk_index + after)
+        
+        # Fetch chunk metadata from GCS to get start_char/end_char
+        chunk_indices = list(range(start_idx, end_idx + 1))
+        chunks = await document_storage.fetch_chunks_with_metadata(doc_uuid, chunk_indices)
+        
+        # Get original extracted text
+        extracted_text = await document_storage.fetch_extracted_text(doc_uuid)
+        
+        # Find min start_char and max end_char from chunk metadata
+        min_start = None
+        max_end = None
+        
+        for chunk_data in chunks:
+            metadata = chunk_data.get("metadata", {})
+            start_char = metadata.get("start_char")
+            end_char = metadata.get("end_char")
+            
+            if start_char is not None and end_char is not None:
+                if min_start is None or start_char < min_start:
+                    min_start = start_char
+                if max_end is None or end_char > max_end:
+                    max_end = end_char
+        
+        # Fallback: if no start_char/end_char, concatenate chunk texts
+        if min_start is None or max_end is None:
+            # Chunks don't have start_char/end_char metadata (shouldn't happen with current code)
+            # Fall back to concatenating texts
+            continuous_text = "\n\n".join(chunk["text"] for chunk in chunks)
+        else:
+            # Extract continuous text from original (NO overlaps!)
+            continuous_text = extracted_text[min_start:max_end]
+        
+        return {
+            "doc_uuid": doc_uuid,
+            "filename": doc_info["filename"],
+            "target_chunk_index": chunk_index,
+            "context_range": [start_idx, end_idx],
+            "text": continuous_text,
+            "chunks_included": len(chunk_indices),
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get chunk context: {str(e)}",
+        )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler"""

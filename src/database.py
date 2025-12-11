@@ -320,6 +320,27 @@ class VectorDB:
                 count,
                 doc_id,
             )
+    
+    async def get_document_by_uuid(self, doc_uuid: str) -> Optional[dict]:
+        """Get document info by UUID"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, doc_uuid, filename, file_type, chunk_count
+                FROM original_documents
+                WHERE doc_uuid = $1
+                """,
+                doc_uuid,
+            )
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "doc_uuid": str(row["doc_uuid"]),
+                "filename": row["filename"],
+                "file_type": row["file_type"],
+                "chunk_count": row["chunk_count"],
+            }
 
 
 # Global database instance

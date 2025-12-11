@@ -146,6 +146,44 @@ class DocumentStorage:
             fetch_one(idx) for idx in chunk_indices
         ])
     
+    async def fetch_chunks_with_metadata(self, doc_uuid: str, chunk_indices: List[int]) -> List[dict]:
+        """
+        Fetch chunks with full metadata (text + metadata including start_char/end_char)
+        
+        Args:
+            doc_uuid: Document UUID
+            chunk_indices: List of chunk indices to fetch
+        
+        Returns:
+            List of chunk dicts with {text, index, metadata} in same order as indices
+        """
+        async def fetch_one(index: int) -> dict:
+            try:
+                path = self.get_chunk_path(doc_uuid, index)
+                blob = self.bucket.blob(path)
+                
+                # Check if exists before download
+                exists = await asyncio.to_thread(blob.exists)
+                if not exists:
+                    raise FileNotFoundError(f"Chunk not found: {path}")
+                
+                content = await asyncio.to_thread(blob.download_as_bytes)
+                chunk_data = json.loads(content)
+                
+                if "text" not in chunk_data:
+                    raise ValueError(f"Invalid chunk format: missing 'text' field")
+                
+                return chunk_data  # Return full dict
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Corrupted chunk JSON at {path}: {e}")
+            except Exception as e:
+                raise Exception(f"Failed to fetch chunk {index} for {doc_uuid}: {e}")
+        
+        # Fetch all chunks in parallel
+        return await asyncio.gather(*[
+            fetch_one(idx) for idx in chunk_indices
+        ])
+    
     async def fetch_extracted_text(self, doc_uuid: str) -> str:
         """Fetch extracted text from GCS"""
         path = f"{doc_uuid}/extracted.txt"
