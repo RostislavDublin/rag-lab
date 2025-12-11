@@ -15,8 +15,10 @@ Architecture decision:
 
 import os
 import warnings
+import asyncio
 from typing import List, Tuple, Optional
 from enum import Enum
+from concurrent.futures import ThreadPoolExecutor
 
 import pymupdf  # PyMuPDF for PDF processing
 
@@ -93,9 +95,15 @@ class DocumentProcessor:
             Text content
         """
         if isinstance(txt_source, bytes):
-            return txt_source.decode('utf-8')
+            try:
+                # Try UTF-8 first
+                return txt_source.decode('utf-8')
+            except UnicodeDecodeError:
+                # Fallback to latin-1 (never fails)
+                print(f"Warning: UTF-8 decode failed, using latin-1")
+                return txt_source.decode('latin-1', errors='replace')
         else:
-            with open(txt_source, 'r', encoding='utf-8') as f:
+            with open(txt_source, 'r', encoding='utf-8', errors='replace') as f:
                 return f.read()
     
     def extract_text(self, file_content: bytes, file_type: str) -> str:
@@ -131,6 +139,8 @@ class DocumentProcessor:
         Returns:
             List of (chunk_text, metadata) tuples
         """
+        print(f"Chunking text ({len(text)} chars, chunk_size={self.chunk_size}, overlap={self.chunk_overlap})...")
+        
         # Simple character-based chunking
         # TODO: Implement smarter sentence-aware chunking
         
@@ -141,14 +151,34 @@ class DocumentProcessor:
             end = start + self.chunk_size
             chunk = text[start:end]
             
-            # Find last complete sentence in chunk
+            # Try to find good boundaries in order of preference:
+            # 1. Double newline (paragraph boundary)
+            # 2. Single newline (line boundary)
+            # 3. Period followed by space (sentence boundary)
+            # 4. Space (word boundary)
+            # 5. Take full chunk_size (for code/JSON/continuous text)
+            
             if end < len(text):
-                last_period = chunk.rfind('.')
-                last_newline = chunk.rfind('\n')
-                boundary = max(last_period, last_newline)
+                boundaries = [
+                    chunk.rfind('\n\n'),      # Paragraph
+                    chunk.rfind('\n'),        # Line
+                    chunk.rfind('. '),        # Sentence (period + space, not just period)
+                    chunk.rfind(' '),         # Word
+                ]
                 
-                if boundary > 0:
-                    end = start + boundary + 1
+                # Use first boundary that's far enough from start (min 100 chars)
+                best_boundary = -1
+                for boundary in boundaries:
+                    if boundary > 100:
+                        best_boundary = boundary
+                        break
+                
+                if best_boundary > 0:
+                    # +1 to include the separator character
+                    if chunk[best_boundary:best_boundary+2] in ['\n\n', '. ']:
+                        end = start + best_boundary + 2
+                    else:
+                        end = start + best_boundary + 1
                     chunk = text[start:end]
             
             chunks.append((
@@ -163,11 +193,12 @@ class DocumentProcessor:
             # Move start position with overlap
             start = end - self.chunk_overlap
         
+        print(f"Created {len(chunks)} chunks")
         return chunks
     
-    def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        Generate embeddings for text chunks
+        Generate embeddings for text chunks (with parallel processing)
         
         Args:
             texts: List of text chunks
@@ -176,20 +207,54 @@ class DocumentProcessor:
             List of embedding vectors
         """
         if self.embedding_provider == EmbeddingProvider.VERTEX_AI:
-            # Process each chunk individually to avoid token limits
-            embeddings = []
-            for text in texts:
-                emb = self.embedding_model.get_embeddings([text])
-                embeddings.append(emb[0].values)
-            return embeddings
+            # Process chunks in parallel (max 10 concurrent requests)
+            return await self._generate_embeddings_parallel(texts, max_workers=10)
         
         elif self.embedding_provider == EmbeddingProvider.SENTENCE_TRANSFORMERS:
-            # Local model
+            # Local model - already efficient
             embeddings = self.embedding_model.encode(texts)
             return embeddings.tolist()
         
         else:
             raise ValueError(f"Provider {self.embedding_provider} not implemented")
+    
+    async def _generate_embeddings_parallel(self, texts: List[str], max_workers: int = 10) -> List[List[float]]:
+        """
+        Generate embeddings in parallel using ThreadPoolExecutor
+        
+        Args:
+            texts: List of text chunks
+            max_workers: Maximum concurrent API calls
+        
+        Returns:
+            List of embedding vectors (preserves order)
+        """
+        print(f"Generating embeddings for {len(texts)} chunks (max {max_workers} parallel)...")
+        
+        def _get_embedding_sync(text: str) -> List[float]:
+            """Synchronous wrapper for Vertex AI API call"""
+            emb = self.embedding_model.get_embeddings([text])
+            return emb[0].values
+        
+        # Run in thread pool to avoid blocking asyncio event loop
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            futures = [loop.run_in_executor(executor, _get_embedding_sync, text) for text in texts]
+            
+            # Wait for all to complete with timeout (2 minutes max)
+            try:
+                embeddings = await asyncio.wait_for(
+                    asyncio.gather(*futures),
+                    timeout=120.0
+                )
+                print(f"✓ Generated {len(embeddings)} embeddings successfully")
+            except asyncio.TimeoutError:
+                print(f"✗ Timeout generating embeddings after 120s")
+                raise TimeoutError("Embedding generation timeout (120s)")
+        
+        return list(embeddings)
+
     
     async def process_document(
         self,
@@ -216,9 +281,9 @@ class DocumentProcessor:
         # Chunk text
         chunks = self.chunk_text(text)
         
-        # Generate embeddings
+        # Generate embeddings (parallel processing)
         chunk_texts = [chunk[0] for chunk in chunks]
-        embeddings = self.generate_embeddings(chunk_texts)
+        embeddings = await self.generate_embeddings(chunk_texts)
         
         # Combine with metadata
         results = []

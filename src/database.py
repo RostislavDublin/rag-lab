@@ -266,6 +266,42 @@ class VectorDB:
                 doc_id,
             )
     
+    async def delete_document_by_hash(self, file_hash: str) -> Optional[dict]:
+        """
+        Delete document by file hash (returns info about deleted document)
+        
+        Returns:
+            dict with deleted document info, or None if not found
+        """
+        async with self.pool.acquire() as conn:
+            # First, get document info
+            row = await conn.fetchrow(
+                """
+                SELECT id, doc_uuid, filename, file_type, file_size, chunk_count
+                FROM original_documents 
+                WHERE file_hash = $1
+                """,
+                file_hash,
+            )
+            
+            if not row:
+                return None
+            
+            # Delete (cascades to chunks)
+            await conn.execute(
+                "DELETE FROM original_documents WHERE file_hash = $1",
+                file_hash,
+            )
+            
+            return {
+                "id": row["id"],
+                "doc_uuid": str(row["doc_uuid"]),
+                "filename": row["filename"],
+                "file_type": row["file_type"],
+                "file_size": row["file_size"],
+                "chunk_count": row["chunk_count"],
+            }
+    
     async def count_documents(self) -> int:
         """Get total original document count"""
         async with self.pool.acquire() as conn:

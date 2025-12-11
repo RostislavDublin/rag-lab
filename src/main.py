@@ -19,6 +19,23 @@ import warnings
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
+from pathlib import Path
+
+# Load environment variables from .env.local (local dev) or .env (production)
+from dotenv import load_dotenv
+
+# Load .env.local first (highest priority), then .env as fallback
+env_local = Path(__file__).parent.parent / ".env.local"
+env_file = Path(__file__).parent.parent / ".env"
+
+if env_local.exists():
+    print(f"Loading environment from: {env_local}")
+    load_dotenv(env_local, override=True)
+elif env_file.exists():
+    print(f"Loading environment from: {env_file}")
+    load_dotenv(env_file, override=True)
+else:
+    print("WARNING: No .env.local or .env file found - using system environment variables only")
 
 # Suppress vertexai deprecation warning - we're using the recommended API
 warnings.filterwarnings('ignore', message='.*deprecated as of June 24, 2025.*')
@@ -28,6 +45,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from vertexai.language_models import TextEmbeddingModel
+
+# Import utilities
+from .utils import calculate_file_hash
 
 from .database import vector_db
 from .document_processor import DocumentProcessor, EmbeddingProvider
@@ -146,6 +166,7 @@ class DocumentUploadResponse(BaseModel):
     doc_id: int
     doc_uuid: str
     filename: str
+    file_hash: str = Field(..., description="SHA256 hash of file content (64 hex chars)")
     chunks_created: int
     message: str
 
@@ -163,6 +184,7 @@ class DocumentInfo(BaseModel):
     filename: str
     file_type: str
     file_size: int
+    file_hash: str = Field(..., description="SHA256 hash of file content (64 hex chars)")
     chunk_count: int
     uploaded_at: str
 
@@ -242,9 +264,8 @@ async def upload_document(file: UploadFile = File(...)):
                 detail=f"File too large. Maximum size: {MAX_FILE_SIZE // (1024*1024)}MB"
             )
         
-        # Calculate file hash for deduplication
-        import hashlib
-        file_hash = hashlib.sha256(file_content).hexdigest()
+        # Calculate file hash for deduplication (using shared utility)
+        file_hash = calculate_file_hash(file_content)
         
         # Check if document already exists
         existing = await vector_db.check_document_exists(file_hash)
@@ -255,6 +276,7 @@ async def upload_document(file: UploadFile = File(...)):
                 doc_id=doc_id,
                 doc_uuid=doc_uuid,
                 filename=existing_filename,
+                file_hash=file_hash,
                 chunks_created=0,
                 message=f"Document already exists (uploaded as '{existing_filename}'). Skipping duplicate."
             )
@@ -262,6 +284,7 @@ async def upload_document(file: UploadFile = File(...)):
         # Extract text from document
         print(f"Processing document: {file.filename} ({file_type})")
         extracted_text = document_processor.extract_text(file_content, file_type)
+        print(f"Extracted {len(extracted_text)} characters")
         
         if not extracted_text.strip():
             raise HTTPException(
@@ -270,11 +293,13 @@ async def upload_document(file: UploadFile = File(...)):
             )
         
         # Process chunks and embeddings FIRST (before DB record)
+        print(f"Starting chunking and embedding generation...")
         chunks_data = await document_processor.process_document(
             file_content=file_content,
             filename=file.filename,
             file_type=file_type
         )
+        print(f"Generated {len(chunks_data)} chunks with embeddings")
         
         # Validate we got chunks
         if not chunks_data:
@@ -346,6 +371,7 @@ async def upload_document(file: UploadFile = File(...)):
             doc_id=doc_id,
             doc_uuid=doc_uuid,
             filename=file.filename,
+            file_hash=file_hash,
             chunks_created=len(gcs_chunks),
             message=f"Document processed successfully: {len(gcs_chunks)} chunks created"
         )
@@ -540,6 +566,55 @@ async def download_document(doc_id: int):
         )
 
 
+@app.get("/v1/documents/by-hash/{file_hash}", response_model=DocumentInfo)
+async def get_document_by_hash(file_hash: str):
+    """
+    Get document info by SHA256 file hash
+    
+    Returns document metadata without downloading file content.
+    Useful for checking if document exists before upload.
+    """
+    try:
+        # Validate hash format
+        if len(file_hash) != 64 or not all(c in "0123456789abcdef" for c in file_hash.lower()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid hash format. Expected 64 lowercase hexadecimal characters (SHA256)",
+            )
+        
+        async with vector_db.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT id, doc_uuid, filename, file_type, file_size, file_hash, chunk_count, uploaded_at
+                FROM original_documents
+                WHERE file_hash = $1
+            """, file_hash.lower())
+        
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with hash {file_hash} not found",
+            )
+        
+        return DocumentInfo(
+            doc_id=row["id"],
+            doc_uuid=str(row["doc_uuid"]),
+            filename=row["filename"],
+            file_type=row["file_type"],
+            file_size=row["file_size"],
+            file_hash=row["file_hash"],
+            chunk_count=row["chunk_count"],
+            uploaded_at=row["uploaded_at"].isoformat(),
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get document: {str(e)}",
+        )
+
+
 @app.get("/v1/documents", response_model=DocumentListResponse)
 async def list_documents():
     """
@@ -554,7 +629,7 @@ async def list_documents():
         async with vector_db.pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT 
-                    id, doc_uuid, filename, file_type, file_size, 
+                    id, doc_uuid, filename, file_type, file_size, file_hash,
                     chunk_count, uploaded_at
                 FROM original_documents
                 ORDER BY uploaded_at DESC
@@ -567,6 +642,7 @@ async def list_documents():
                 filename=row["filename"],
                 file_type=row["file_type"],
                 file_size=row["file_size"],
+                file_hash=row["file_hash"],
                 chunk_count=row["chunk_count"],
                 uploaded_at=row["uploaded_at"].isoformat(),
             )
@@ -632,6 +708,73 @@ async def delete_document(doc_id: int):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Document deletion failed: {str(e)}",
+        )
+
+
+@app.delete("/v1/documents/by-hash/{file_hash}", response_model=DocumentDeleteResponse)
+async def delete_document_by_hash(file_hash: str):
+    """
+    Delete document by SHA256 file hash
+    
+    Useful for automated cleanup when you know file content but not database ID.
+    
+    **Hash Calculation (Python):**
+    ```python
+    import hashlib
+    with open("file.pdf", "rb") as f:  # Binary mode required!
+        file_hash = hashlib.sha256(f.read()).hexdigest()
+    ```
+    
+    **Hash Calculation (bash):**
+    ```bash
+    shasum -a 256 document.pdf | cut -d' ' -f1
+    ```
+    
+    **Important:** Use binary mode (`rb`), not text mode. Hash must be 64 lowercase hex chars.
+    """
+    try:
+        # Validate hash format (64 hex characters)
+        if len(file_hash) != 64 or not all(c in "0123456789abcdef" for c in file_hash.lower()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid hash format. Expected 64 lowercase hexadecimal characters (SHA256)",
+            )
+        
+        # Delete by hash (returns info about deleted document)
+        deleted_info = await vector_db.delete_document_by_hash(file_hash.lower())
+        
+        if not deleted_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with hash {file_hash} not found",
+            )
+        
+        doc_uuid = deleted_info["doc_uuid"]
+        filename = deleted_info["filename"]
+        chunk_count = deleted_info["chunk_count"]
+        doc_id = deleted_info["id"]
+        
+        # Delete from GCS
+        try:
+            await document_storage.delete_document(doc_uuid)
+            print(f"Deleted GCS files for {doc_uuid} (hash: {file_hash})")
+        except Exception as e:
+            print(f"Warning: GCS deletion failed for {doc_uuid}: {e}")
+            # Continue even if GCS fails (DB already deleted)
+        
+        return DocumentDeleteResponse(
+            doc_id=doc_id,
+            filename=filename,
+            chunks_deleted=chunk_count,
+            message=f"Document '{filename}' deleted successfully by hash ({chunk_count} chunks removed)",
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Document deletion by hash failed: {str(e)}",
         )
 
 

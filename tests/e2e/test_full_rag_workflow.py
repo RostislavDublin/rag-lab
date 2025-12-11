@@ -18,6 +18,8 @@ import pytest
 import requests
 from google.cloud import storage
 
+from src.utils import calculate_file_hash
+
 
 # Test configuration
 API_BASE = "http://localhost:8080"
@@ -30,62 +32,75 @@ def gcs_client():
     return storage.Client()
 
 
-@pytest.fixture(scope="module", autouse=True)
-def cleanup_before_tests(gcs_client):
-    """Clean up system before running tests"""
-    print("\n🧹 Cleaning up system before tests...")
-    
-    # Delete all documents via API
-    response = requests.get(f"{API_BASE}/v1/documents", timeout=10)
-    if response.status_code == 200:
-        docs = response.json()["documents"]
-        for doc in docs:
-            requests.delete(f"{API_BASE}/v1/documents/{doc['doc_id']}", timeout=30)
-        if docs:
-            print(f"   Deleted {len(docs)} existing document(s)")
-    
-    # Verify GCS is clean
-    bucket = gcs_client.bucket(GCS_BUCKET)
-    blobs = list(bucket.list_blobs())
-    if blobs:
-        print(f"   Warning: {len(blobs)} orphaned objects in GCS (should not happen)")
-    
-    print("✓ System is clean, starting tests\n")
-
-
 @pytest.fixture(scope="module")
 def test_documents():
-    """Test document paths - using full Google whitepapers"""
+    """Test document paths and their hashes for selective cleanup"""
     fixtures_dir = Path(__file__).parent.parent / "fixtures" / "documents"
-    return {
+    docs = {
         "txt": fixtures_dir / "rag_architecture_guide.txt",
         "pdf": fixtures_dir / "google_agent_quality.pdf",
         "pdf_context": fixtures_dir / "google_context_engineering.pdf"
     }
+    
+    # Calculate hashes for selective cleanup (preserves user documents)
+    docs["txt_hash"] = calculate_file_hash(docs["txt"])
+    docs["pdf_hash"] = calculate_file_hash(docs["pdf"])
+    
+    return docs
 
 
-def test_01_verify_system_empty(gcs_client):
-    """Step 1: Verify PostgreSQL and GCS are empty"""
-    print("\n=== Step 1: Verify system is empty ===")
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_test_documents(request, test_documents):
+    """Clean up ONLY test documents before and after tests (preserves user documents!)"""
+    print("\n🧹 Cleaning up test documents (user documents will be preserved)...")
+    
+    # Delete test documents by hash (if they exist from previous run)
+    deleted_before = 0
+    for hash_key in ["txt_hash", "pdf_hash"]:
+        file_hash = test_documents[hash_key]
+        response = requests.delete(f"{API_BASE}/v1/documents/by-hash/{file_hash}", timeout=30)
+        if response.status_code == 200:
+            result = response.json()
+            print(f"   Deleted leftover: {result['filename']}")
+            deleted_before += 1
+    
+    if deleted_before == 0:
+        print("   No leftover test documents found")
+    
+    print("✓ Ready to run tests (user documents preserved)\n")
+    
+    yield  # Run tests
+    
+    # Cleanup after tests (unless --no-cleanup flag is used)
+    if not request.config.getoption("--no-cleanup"):
+        print("\n🧹 Cleaning up test documents after tests...")
+        deleted_after = 0
+        for hash_key in ["txt_hash", "pdf_hash"]:
+            file_hash = test_documents[hash_key]
+            response = requests.delete(f"{API_BASE}/v1/documents/by-hash/{file_hash}", timeout=30)
+            if response.status_code == 200:
+                deleted_after += 1
+        
+        print(f"✓ Deleted {deleted_after} test document(s), user documents preserved\n")
+    else:
+        print("\n⚠️  --no-cleanup flag: test documents left in system for inspection")
+
+
+def test_01_verify_api_health():
+    """Step 1: Verify API is running and healthy"""
+    print("\n=== Step 1: Verify API health ===")
     
     # Check API health
     response = requests.get(f"{API_BASE}/health", timeout=10)
     assert response.status_code == 200
     health = response.json()
-    print(f"API version: {health['version']}, uptime: {health['uptime_seconds']}s")
+    print(f"✓ API version: {health['version']}, uptime: {health['uptime_seconds']}s")
     
-    # Check PostgreSQL (via API)
+    # Check API can list documents (may have user documents - that's OK!)
     response = requests.get(f"{API_BASE}/v1/documents", timeout=10)
     assert response.status_code == 200
     docs = response.json()
-    assert docs["total"] == 0, f"Expected 0 documents, found {docs['total']}"
-    print(f"✓ PostgreSQL: 0 documents")
-    
-    # Check GCS
-    bucket = gcs_client.bucket(GCS_BUCKET)
-    blobs = list(bucket.list_blobs())
-    assert len(blobs) == 0, f"Expected 0 GCS objects, found {len(blobs)}"
-    print(f"✓ GCS: 0 objects")
+    print(f"✓ API responsive, current documents: {docs['total']}")
 
 
 def test_02_upload_txt_document(test_documents):
@@ -106,8 +121,6 @@ def test_02_upload_txt_document(test_documents):
     print(f"✓ Uploaded: {result['filename']}")
     print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
     print(f"  - Chunks: {result['chunks_created']}")
-    
-    return result
 
 
 def test_03_upload_pdf_document(test_documents):
@@ -128,8 +141,6 @@ def test_03_upload_pdf_document(test_documents):
     print(f"✓ Uploaded: {result['filename']}")
     print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
     print(f"  - Chunks: {result['chunks_created']}")
-    
-    return result
 
 
 def test_04_list_documents():
@@ -171,8 +182,6 @@ def test_05_query_rag_system():
         print(f"\n  [{i}] Similarity: {chunk['similarity']:.3f}")
         print(f"      From: {chunk['filename']} (chunk {chunk['chunk_index']})")
         print(f"      Text: {chunk['chunk_text'][:100]}...")
-    
-    return result["results"][0]["original_doc_id"] if result["results"] else None
 
 
 def test_06_download_document():
@@ -221,50 +230,8 @@ def test_07_verify_gcs_storage(gcs_client):
     
     print(f"✓ GCS contains {len(blobs)} objects for {len(uuids)} document(s)")
     print(f"  File types: {dict(file_types)}")
-
-
-def test_08_delete_all_documents():
-    """Step 8: Delete all documents"""
-    print("\n=== Step 8: Delete all documents ===")
-    
-    # Get all documents
-    response = requests.get(f"{API_BASE}/v1/documents", timeout=10)
-    docs = response.json()["documents"]
-    
-    if not docs:
-        print("  No documents to delete")
-        return
-    
-    # Delete each document
-    deleted_count = 0
-    for doc in docs:
-        response = requests.delete(f"{API_BASE}/v1/documents/{doc['doc_id']}", timeout=30)
-        assert response.status_code == 200, f"Delete failed for doc {doc['doc_id']}"
-        result = response.json()
-        print(f"  ✓ Deleted: {result['filename']} ({result['chunks_deleted']} chunks)")
-        deleted_count += 1
-    
-    print(f"\n✓ Deleted {deleted_count} document(s)")
-
-
-def test_09_verify_cleanup(gcs_client):
-    """Step 9: Verify complete cleanup (DB + GCS)"""
-    print("\n=== Step 9: Verify complete cleanup ===")
-    
-    # Check PostgreSQL
-    response = requests.get(f"{API_BASE}/v1/documents", timeout=10)
-    assert response.status_code == 200
-    docs = response.json()
-    assert docs["total"] == 0, f"PostgreSQL not clean: {docs['total']} documents remain"
-    print(f"✓ PostgreSQL: 0 documents")
-    
-    # Check GCS
-    bucket = gcs_client.bucket(GCS_BUCKET)
-    blobs = list(bucket.list_blobs())
-    assert len(blobs) == 0, f"GCS not clean: {len(blobs)} objects remain"
-    print(f"✓ GCS: 0 objects")
-    
-    print("\n🎉 E2E test completed successfully! System is clean.")
+    print("\n🎉 E2E test completed successfully!")
+    print("   Test documents will be cleaned up automatically (user documents preserved)")
 
 
 if __name__ == "__main__":

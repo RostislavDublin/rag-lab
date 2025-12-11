@@ -101,7 +101,51 @@ curl -X POST http://localhost:8080/v1/documents/upload -F "file=@doc_copy.pdf"
 
 ## Quick Start (Local Development)
 
-### Option 1: Local Development with Cloud Infrastructure (Recommended)
+### Option 1: Local Development with uvicorn (Recommended)
+
+**Prerequisites:**
+
+1. **Create `.env.local` file** (required!):
+   ```bash
+   cd /Users/Rostislav_Dublin/src/drs/ai/rag-lab
+   cp .env.local.example .env.local
+   # Edit .env.local with real values:
+   # - DATABASE_URL (PostgreSQL connection string)
+   # - GCP_PROJECT_ID
+   # - GCS_BUCKET_NAME
+   # - Other required vars
+   ```
+
+2. **Setup virtual environment** (one-time):
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+**Start Server:**
+
+```bash
+# Navigate to project root
+cd /Users/Rostislav_Dublin/src/drs/ai/rag-lab
+
+# Activate virtual environment
+source .venv/bin/activate
+
+# Start uvicorn with hot reload
+uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
+
+# Server runs at http://localhost:8080
+# Swagger UI at http://localhost:8080/docs
+# Code changes auto-reload (no restart needed!)
+```
+
+**One-liner:**
+```bash
+cd /Users/Rostislav_Dublin/src/drs/ai/rag-lab && source .venv/bin/activate && uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+### Option 2: Using deployment script
 
 Fast iteration with Cloud SQL Proxy and hot reload:
 
@@ -129,7 +173,7 @@ python local_run.py
 - Fast iteration: no Docker builds
 - Cloud SQL Proxy: automatic connection
 
-### Option 2: Docker Compose (Fully Local)
+### Option 3: Docker Compose (Fully Local)
 
 ```bash
 # Start PostgreSQL + API
