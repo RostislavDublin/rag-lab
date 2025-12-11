@@ -168,6 +168,8 @@ class DocumentUploadResponse(BaseModel):
     filename: str
     file_hash: str = Field(..., description="SHA256 hash of file content (64 hex chars)")
     chunks_created: int
+    splits_performed: int = Field(default=0, description="Number of chunk splits due to token limit")
+    max_split_depth: int = Field(default=0, description="Maximum recursion depth during splitting")
     message: str
 
 
@@ -278,6 +280,8 @@ async def upload_document(file: UploadFile = File(...)):
                 filename=existing_filename,
                 file_hash=file_hash,
                 chunks_created=0,
+                splits_performed=0,
+                max_split_depth=0,
                 message=f"Document already exists (uploaded as '{existing_filename}'). Skipping duplicate."
             )
         
@@ -294,7 +298,7 @@ async def upload_document(file: UploadFile = File(...)):
         
         # Process chunks and embeddings FIRST (before DB record)
         print(f"Starting chunking and embedding generation...")
-        chunks_data = await document_processor.process_document(
+        chunks_data, embedding_stats = await document_processor.process_document(
             file_content=file_content,
             filename=file.filename,
             file_type=file_type
@@ -373,6 +377,8 @@ async def upload_document(file: UploadFile = File(...)):
             filename=file.filename,
             file_hash=file_hash,
             chunks_created=len(gcs_chunks),
+            splits_performed=embedding_stats.get("splits_performed", 0),
+            max_split_depth=embedding_stats.get("max_depth_reached", 0),
             message=f"Document processed successfully: {len(gcs_chunks)} chunks created"
         )
     

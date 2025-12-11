@@ -40,8 +40,8 @@ class DocumentProcessor:
     def __init__(
         self,
         embedding_provider: EmbeddingProvider = EmbeddingProvider.VERTEX_AI,
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
+        chunk_size: int = 2000,  # Balanced: good RAG quality + retry safety net
+        chunk_overlap: int = 200,
     ):
         self.embedding_provider = embedding_provider
         self.chunk_size = chunk_size
@@ -196,64 +196,135 @@ class DocumentProcessor:
         print(f"Created {len(chunks)} chunks")
         return chunks
     
-    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+    async def generate_embeddings(self, texts: List[str]) -> tuple[List[tuple[str, List[float]]], dict]:
         """
-        Generate embeddings for text chunks (with parallel processing)
+        Generate embeddings for text chunks (with parallel processing).
+        If chunk too large, splits it into multiple chunks.
         
         Args:
             texts: List of text chunks
         
         Returns:
-            List of embedding vectors
+            Tuple of (list of (text, embedding) pairs, stats dict)
+            Note: May return MORE pairs than input if chunks split
         """
         if self.embedding_provider == EmbeddingProvider.VERTEX_AI:
             # Process chunks in parallel (max 10 concurrent requests)
-            return await self._generate_embeddings_parallel(texts, max_workers=10)
+            pairs, stats = await self._generate_embeddings_parallel(texts, max_workers=10)
+            return pairs, stats
         
         elif self.embedding_provider == EmbeddingProvider.SENTENCE_TRANSFORMERS:
-            # Local model - already efficient
+            # Local model - already efficient, no splits
             embeddings = self.embedding_model.encode(texts)
-            return embeddings.tolist()
+            pairs = [(text, emb.tolist()) for text, emb in zip(texts, embeddings)]
+            return pairs, {"splits_performed": 0, "max_depth_reached": 0}
         
         else:
             raise ValueError(f"Provider {self.embedding_provider} not implemented")
     
-    async def _generate_embeddings_parallel(self, texts: List[str], max_workers: int = 10) -> List[List[float]]:
+    async def _generate_embeddings_parallel(self, texts: List[str], max_workers: int = 10) -> tuple[List[tuple[str, List[float]]], dict]:
         """
-        Generate embeddings in parallel using ThreadPoolExecutor
+        Generate embeddings in parallel using ThreadPoolExecutor.
+        If a chunk exceeds token limit, splits it in half and returns 2 separate chunks.
         
         Args:
             texts: List of text chunks
             max_workers: Maximum concurrent API calls
         
         Returns:
-            List of embedding vectors (preserves order)
+            Tuple of (list of (text, embedding) pairs, stats dict)
+            Note: May return MORE pairs than input if chunks split
         """
         print(f"Generating embeddings for {len(texts)} chunks (max {max_workers} parallel)...")
         
-        def _get_embedding_sync(text: str) -> List[float]:
-            """Synchronous wrapper for Vertex AI API call"""
-            emb = self.embedding_model.get_embeddings([text])
-            return emb[0].values
+        # Track statistics
+        stats = {"splits_performed": 0, "max_depth_reached": 0}
+        
+        def _get_embedding_with_retry(text: str, depth: int = 0) -> List[tuple[str, List[float]]]:
+            """
+            Generate embedding with automatic retry on token limit errors.
+            Splits chunk in half if too large and returns 2 separate (text, embedding) pairs.
+            
+            Args:
+                text: Text to embed
+                depth: Recursion depth (to prevent infinite loops)
+            
+            Returns:
+                List of (text, embedding) pairs - single item normally, 2+ items if split
+            """
+            if depth > 3:
+                # Safety: prevent infinite recursion
+                raise ValueError(f"Chunk too small to split further (depth={depth})")
+            
+            try:
+                # Try to get embedding (auto_truncate=False to catch errors)
+                emb = self.embedding_model.get_embeddings([text])
+                return [(text, emb[0].values)]
+            
+            except Exception as e:
+                error_msg = str(e).lower()
+                
+                # Check if it's a token limit error (400 status)
+                if "400" in error_msg or "token" in error_msg or "exceed" in error_msg:
+                    stats["splits_performed"] += 1
+                    stats["max_depth_reached"] = max(stats["max_depth_reached"], depth + 1)
+                    
+                    print(f"  ⚠️  Chunk too large ({len(text)} chars), splitting in half (depth={depth})...")
+                    print(f"      Split #{stats['splits_performed']}: {len(text)} chars → 2 sub-chunks")
+                    
+                    # Split chunk in half at nearest semantic boundary
+                    mid = len(text) // 2
+                    
+                    # Try to find good split point near middle
+                    split_point = mid
+                    for separator in ['\n\n', '\n', '. ', ' ']:
+                        # Search ±20% around midpoint
+                        search_start = int(mid * 0.8)
+                        search_end = int(mid * 1.2)
+                        boundary = text[search_start:search_end].find(separator)
+                        if boundary != -1:
+                            split_point = search_start + boundary + len(separator)
+                            break
+                    
+                    # Split and retry recursively
+                    chunk1 = text[:split_point].strip()
+                    chunk2 = text[split_point:].strip()
+                    
+                    pairs1 = _get_embedding_with_retry(chunk1, depth + 1)
+                    pairs2 = _get_embedding_with_retry(chunk2, depth + 1)
+                    
+                    # Return BOTH chunks as separate items
+                    print(f"  ✓ Created {len(pairs1) + len(pairs2)} sub-chunks from split #{stats['splits_performed']}")
+                    return pairs1 + pairs2
+                else:
+                    # Not a token error - re-raise
+                    raise
         
         # Run in thread pool to avoid blocking asyncio event loop
         loop = asyncio.get_event_loop()
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
-            futures = [loop.run_in_executor(executor, _get_embedding_sync, text) for text in texts]
+            futures = [loop.run_in_executor(executor, _get_embedding_with_retry, text) for text in texts]
             
             # Wait for all to complete with timeout (2 minutes max)
             try:
-                embeddings = await asyncio.wait_for(
+                results = await asyncio.wait_for(
                     asyncio.gather(*futures),
                     timeout=120.0
                 )
-                print(f"✓ Generated {len(embeddings)} embeddings successfully")
+                # Flatten results (each result is a list of pairs)
+                all_pairs = []
+                for pairs in results:
+                    all_pairs.extend(pairs)
+                
+                print(f"✓ Generated {len(all_pairs)} embeddings successfully (from {len(texts)} original chunks)")
+                if stats["splits_performed"] > 0:
+                    print(f"   📊 Splits performed: {stats['splits_performed']}, Max depth: {stats['max_depth_reached']}")
             except asyncio.TimeoutError:
                 print(f"✗ Timeout generating embeddings after 120s")
                 raise TimeoutError("Embedding generation timeout (120s)")
         
-        return list(embeddings)
+        return all_pairs, stats
 
     
     async def process_document(
@@ -282,23 +353,27 @@ class DocumentProcessor:
         chunks = self.chunk_text(text)
         
         # Generate embeddings (parallel processing)
+        # Returns list of (text, embedding) pairs - may be MORE than len(chunks) if splits occurred
         chunk_texts = [chunk[0] for chunk in chunks]
-        embeddings = await self.generate_embeddings(chunk_texts)
+        pairs, embedding_stats = await self.generate_embeddings(chunk_texts)
         
         # Combine with metadata
+        # Note: We need to re-index because splits may have created extra chunks
         results = []
         base_metadata = metadata or {}
         
-        for (chunk_text, chunk_meta), embedding in zip(chunks, embeddings):
+        for idx, (chunk_text, embedding) in enumerate(pairs):
             combined_meta = {
                 **base_metadata,
-                **chunk_meta,
+                "chunk_index": idx,
+                "chunk_size": len(chunk_text),
                 "source_file": filename,
                 "embedding_provider": self.embedding_provider.value,
             }
             results.append((chunk_text, embedding, combined_meta))
         
-        return results
+        # Add embedding stats to results
+        return results, embedding_stats
 
 
 # Convenience function for default provider

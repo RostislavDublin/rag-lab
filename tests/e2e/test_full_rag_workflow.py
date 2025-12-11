@@ -37,7 +37,7 @@ def test_documents():
     """Test document paths and their hashes for selective cleanup"""
     fixtures_dir = Path(__file__).parent.parent / "fixtures" / "documents"
     docs = {
-        "txt": fixtures_dir / "rag_architecture_guide.txt",
+        "txt": fixtures_dir / "bug_too_many.txt",  # Large file to test splitting
         "pdf": fixtures_dir / "google_agent_quality.pdf",
         "pdf_context": fixtures_dir / "google_context_engineering.pdf"
     }

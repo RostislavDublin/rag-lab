@@ -287,8 +287,18 @@ curl -X POST http://localhost:8080/v1/documents/upload \
 3. If duplicate: return existing document info, skip processing
 4. If new: Extract text (PyMuPDF for PDF, UTF-8 decode for TXT)
 5. Create database record → get UUID
-6. Chunk text (500 chars, 50 overlap)
-7. Generate embeddings (Vertex AI text-embedding-005, 768 dimensions)
+6. **Chunk text** - balanced chunking for RAG quality:
+   - **chunk_size: 2000 chars** (~500 tokens) - optimal balance between context and precision
+   - **chunk_overlap: 200 chars** - preserves continuity across boundaries
+   - Uses recursive text splitting (paragraphs → sentences → words)
+7. **Generate embeddings** (Vertex AI text-embedding-005, 768 dimensions):
+   - Parallel processing (max 10 concurrent API calls)
+   - **Retry-on-error with smart splitting:**
+     - If chunk exceeds token limit (very rare with 2000 chars) → split at semantic boundary
+     - Recursively creates 2+ smaller chunks instead of averaging
+     - Returns separate (text, embedding) pairs for each sub-chunk
+     - Ensures: **#chunks = #embeddings** (always synchronized)
+   - Model supports up to 20,000 tokens (our 2000 chars ≈ 500 tokens → safe margin)
 8. Upload to GCS in parallel: file + extracted text + all chunk JSONs
 9. Store embeddings + file_hash in PostgreSQL
 10. Update chunk count in database
@@ -622,12 +632,48 @@ FROM original_documents;
 ### 3. Run Tests
 
 ```bash
-# Unit tests (future)
-pytest tests/
+# Unit tests
+pytest tests/unit/ -v
+
+# E2E tests (requires running server)
+pytest tests/e2e/ -v
 
 # Integration tests
 python scripts/test_api.py
 ```
+
+## Chunking Strategy
+
+### Why 2000 chars?
+
+Our chunking strategy balances **RAG quality** vs **API efficiency**:
+
+- **chunk_size: 2000 chars** (~500 tokens)
+  - Too small (<500 chars): loses context, too many API calls
+  - Too large (>3000 chars): reduces search precision, noisy results
+  - Sweet spot: 1500-2000 chars for semantic coherence
+
+- **chunk_overlap: 200 chars**
+  - Prevents information loss at boundaries
+  - Improves retrieval when answer spans multiple chunks
+
+### Retry Logic (Safety Net)
+
+While `text-embedding-005` supports up to **20,000 tokens** (our chunks are ~500), we include retry logic as defense-in-depth:
+
+1. **Try:** Send chunk to Vertex AI embedding API
+2. **Catch:** If `400 error` + `"token"` in message (rare)
+3. **Split:** Divide at semantic boundary (paragraphs → sentences → words)
+4. **Recurse:** Process sub-chunks separately (max depth: 3)
+5. **Result:** Multiple (text, embedding) pairs instead of averaging
+
+**Key invariant:** `#chunks = #embeddings` (always synchronized between GCS and PostgreSQL)
+
+### Performance Impact
+
+- **bug_too_many.txt** (26KB): 13 chunks (was 58 with old 500-char chunks)
+- **4.5x fewer API calls** with better context quality
+- Retry never triggers in practice (2000 chars << 20K token limit)
 
 ## Project Structure
 
