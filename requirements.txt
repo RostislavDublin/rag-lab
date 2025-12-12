@@ -43,3 +43,4 @@ xmltodict>=0.13.0  # Clean XML to dict conversion
 # Optional: LangChain integration
 # langchain>=0.1.0
 # langchain-google-vertexai>=0.1.0
+python-magic>=0.4.27  # Content-based file type detection (magic bytes)

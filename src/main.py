@@ -47,6 +47,7 @@ from google.genai.types import EmbedContentConfig, HttpOptions
 
 # Import utilities
 from .utils import calculate_file_hash
+from .file_validator import FileValidator
 
 from .database import vector_db
 from .document_processor import DocumentProcessor, EmbeddingProvider
@@ -68,6 +69,7 @@ document_storage = DocumentStorage(bucket_name=GCS_BUCKET)
 # Global instances
 genai_client = None
 document_processor = None
+file_validator = FileValidator()  # Initialize file validator
 
 
 @asynccontextmanager
@@ -261,37 +263,22 @@ async def upload_document(file: UploadFile = File(...)):
         file: document.pdf
     """
     try:
-        # Supported file extensions
-        SUPPORTED_EXTENSIONS = {
-            '.pdf', '.txt', '.md', '.markdown', '.rst', '.log',
-            '.json', '.csv', '.xml', '.yaml', '.yml', '.toml', '.ini',
-            '.py', '.js', '.html', '.css'
-        }
-        
-        # Validate file type before reading
-        filename_lower = file.filename.lower()
-        file_ext = Path(filename_lower).suffix
-        
-        if file_ext not in SUPPORTED_EXTENSIONS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported file type '{file_ext}'. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
-            )
-        
-        # Determine file type (pdf or text-based)
-        file_type = 'pdf' if file_ext == '.pdf' else 'txt'
-        content_type = 'application/pdf' if file_type == 'pdf' else 'text/plain'
-        
-        # Read file content
+        # Read file content first (needed for validation)
         file_content = await file.read()
         
-        # Validate file size (max 50MB to avoid memory issues)
-        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-        if len(file_content) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File too large. Maximum size: {MAX_FILE_SIZE // (1024*1024)}MB"
-            )
+        # VALIDATION: Multi-tier file validation (strict/structured/lenient)
+        # This is the quality gate for RAG system
+        # Better to reject bad input once than get bad search results forever
+        validation_result = file_validator.validate(file.filename, file_content)
+        
+        # Determine processing type based on validation
+        if validation_result.format_type == "pdf":
+            file_type = "pdf"
+            content_type = "application/pdf"
+        else:
+            # All other formats processed as text (including JSON→YAML, XML→YAML)
+            file_type = "txt"
+            content_type = "text/plain"
         
         # Calculate file hash for deduplication (using shared utility)
         file_hash = calculate_file_hash(file_content)

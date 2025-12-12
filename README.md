@@ -258,11 +258,59 @@ curl -X POST http://localhost:8080/v1/query \
   -d '{"query": "How does HNSW indexing work?", "top_k": 5}'
 ```
 
+## File Validation
+
+**Quality-First Philosophy:**
+> "Better to reject bad input once than get bad search results forever."
+
+**Why strict validation matters for RAG:**
+- **Upload:** One-time operation (spend 5 minutes fixing input)
+- **Queries:** Hundreds of times over months (bad embeddings = permanent damage)
+- **Cost:** Bad embeddings waste compute and are expensive to fix
+- **Debugging:** "Why doesn't search work?" 3 months later = nightmare
+- **Transparency:** Explicit errors > silent failures
+
+**3-Tier Validation Strategy:**
+
+| Tier | Formats | Validation Policy | Rationale |
+|------|---------|-------------------|-----------|
+| **STRICT** | `.pdf` | Magic bytes + parse validation, fail fast on any mismatch | Binary formats are either valid or broken |
+| **STRUCTURED** | `.json`, `.xml`, `.yaml`, `.yml` | Parse validation, fail on syntax errors | Broken structure = lost semantic information |
+| **LENIENT** | `.txt`, `.md`, `.py`, code, logs (14 formats) | UTF-8 validation only | Text is fault-tolerant by design |
+
+**Validation Steps:**
+1. **Size check:** 100MB limit (prevent DoS)
+2. **Extension whitelist:** 17 supported formats (first line of defense)
+3. **Magic bytes detection:** Uses `libmagic` to verify actual file type (prevent spoofing)
+4. **Tier-specific validation:** Based on format characteristics
+
+**Example Error Messages:**
+```json
+{
+  "detail": "Format mismatch: File has .pdf extension but contains text/plain.\nSolution: Rename to .txt or convert to actual PDF.\nReason: Prevents incorrect processing pipeline."
+}
+```
+
+```json
+{
+  "detail": "Invalid JSON syntax at line 5, column 12: Expecting ',' delimiter\nSolution: Fix JSON syntax and re-upload.\nReason: Broken structure loses semantic information for optimal chunking."
+}
+```
+
+**Security:**
+- Magic bytes prevent file spoofing (e.g., `malware.exe` renamed to `data.pdf`)
+- Parse validation prevents corrupted files from polluting RAG corpus
+- Explicit errors guide users to fix issues before upload
+
+**Dependencies:**
+- `python-magic>=0.4.27` (Python library)
+- `libmagic` (system library: `brew install libmagic` or `apt-get install libmagic1`)
+
 ## API Endpoints
 
 ### `POST /v1/documents/upload`
 
-Upload and process PDF or TXT document. Automatically detects and rejects duplicates.
+Upload and process documents with strict validation. Automatically detects and rejects duplicates.
 
 **Supported formats (17 total):**
 - **Documents:** `.pdf`, `.txt`, `.md`, `.markdown`, `.rst`, `.log`
@@ -273,6 +321,11 @@ Upload and process PDF or TXT document. Automatically detects and rejects duplic
 - JSON/XML files are converted to YAML format to preserve semantic structure
 - Minimizes syntax noise while maintaining full information content
 - LLM-friendly representation for better RAG quality
+
+**File validation:**
+- All uploads validated using 3-tier strategy (see [File Validation](#file-validation))
+- Corrupted files rejected with actionable error messages
+- Magic bytes prevent file spoofing attacks
 
 **Request:**
 ```bash
@@ -505,6 +558,22 @@ python teardown.py
 
 **CRITICAL:** Deploy Cloud Run and GCS bucket in **same region** (e.g., us-central1) for $0 egress costs
 
+### System Dependencies
+
+**For file validation (magic bytes detection):**
+
+macOS:
+```bash
+brew install libmagic
+```
+
+Ubuntu/Debian:
+```bash
+sudo apt-get install libmagic1
+```
+
+**Why needed:** The `python-magic` library wraps the system `libmagic` library to perform industry-standard file type detection using magic bytes (first 2KB of file). This prevents file spoofing attacks and ensures correct processing pipelines.
+
 ### Database Connection String Format
 
 ```bash
@@ -529,6 +598,14 @@ DATABASE_URL=postgresql://raglab:password@localhost:5432/raglab
 - `pymupdf>=1.23.0` - PDF text extraction
 - `pymupdf4llm>=0.2.7` - LLM-optimized PDF extraction (PDF → Markdown)
 - `pymupdf_layout==1.26.6` - Improved PDF layout analysis
+- `pyyaml>=6.0` - YAML processing (for structured data conversion)
+- `xmltodict>=0.13.0` - XML to dictionary conversion (for JSON/XML → YAML pipeline)
+
+**File Validation:**
+- `python-magic>=0.4.27` - Content-based file type detection using magic bytes
+  - Prevents file spoofing (e.g., executable renamed to .pdf)
+  - Industry standard (wraps Unix `file` command libmagic)
+  - Requires system library: `brew install libmagic` (macOS) or `apt-get install libmagic1` (Linux)
 - `pyyaml>=6.0` - YAML parsing and generation (JSON/XML → YAML conversion)
 - `xmltodict>=0.13.0` - Clean XML to dict conversion
 
@@ -821,6 +898,42 @@ rag-lab/
 
 ## Troubleshooting
 
+### File Upload Validation Errors
+
+**Format mismatch error:**
+```json
+{
+  "detail": "Format mismatch: File has .pdf extension but contains text/plain"
+}
+```
+**Solution:** File extension doesn't match actual content. Either:
+- Rename file to correct extension (e.g., `.txt`)
+- Convert to actual PDF using proper tool
+
+**Parse error for structured data:**
+```json
+{
+  "detail": "Invalid JSON syntax at line 5, column 12: Expecting ',' delimiter"
+}
+```
+**Solution:** Fix syntax error in JSON/XML/YAML file before uploading. Validation ensures semantic structure is preserved for optimal RAG quality.
+
+**File too large:**
+```json
+{
+  "detail": "File size 105MB exceeds maximum 100MB"
+}
+```
+**Solution:** Split large file into smaller chunks or compress using proper format.
+
+**Corrupted PDF:**
+```json
+{
+  "detail": "PDF appears corrupted: Cannot open document"
+}
+```
+**Solution:** Re-export PDF from source or use PDF repair tool (e.g., `gs -o repaired.pdf -sDEVICE=pdfwrite broken.pdf`).
+
 ### Database Connection Failed
 
 ```bash
@@ -846,6 +959,26 @@ export GCP_PROJECT_ID=your-project-id
 
 # Test gcloud auth
 gcloud auth list
+```
+
+### libmagic Installation Issues
+
+**macOS - "failed to find libmagic":**
+```bash
+brew install libmagic
+# If still fails, try:
+brew reinstall libmagic
+```
+
+**Linux - "failed to find libmagic":**
+```bash
+sudo apt-get update
+sudo apt-get install libmagic1 libmagic-dev
+```
+
+**Docker:** Add to Dockerfile:
+```dockerfile
+RUN apt-get update && apt-get install -y libmagic1
 ```
 
 ### Cloud Run Deployment Failed
