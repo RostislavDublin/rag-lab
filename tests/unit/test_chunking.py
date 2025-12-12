@@ -1,11 +1,18 @@
 """Test chunking algorithm without Vertex AI calls"""
 
-from src.document_processor import DocumentProcessor
+from unittest.mock import Mock
+from src.document_processor import DocumentProcessor, EmbeddingProvider
 
 
 def test_bug_too_many_chunking():
     """Test that bug_too_many.txt produces reasonable number of chunks"""
-    processor = DocumentProcessor(chunk_size=500, chunk_overlap=50)
+    mock_client = Mock()
+    processor = DocumentProcessor(
+        chunk_size=500,
+        chunk_overlap=50,
+        embedding_provider=EmbeddingProvider.VERTEX_AI,
+        genai_client=mock_client
+    )
     
     # Read the problematic file
     with open("tests/fixtures/documents/bug_too_many.txt", "r") as f:

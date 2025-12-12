@@ -10,11 +10,22 @@ Verifies that the complete pipeline (extract → chunk → store) preserves text
 6. Compare: verify chunks cover entire extracted text
 
 This test ensures no text is lost or corrupted during the chunking process.
+
+Requirements:
+- Running FastAPI server on localhost:8080
+- Real Vertex AI connection for embeddings
+- Database and GCS configured
+
+To run: pytest tests/integration/test_chunking_integrity.py -v
+To skip: pytest -m 'not integration'
 """
 
 from pathlib import Path
 import pytest
 import requests
+
+# Mark all tests in this file as integration tests
+pytestmark = pytest.mark.integration
 
 # Test configuration
 API_BASE = "http://localhost:8080"

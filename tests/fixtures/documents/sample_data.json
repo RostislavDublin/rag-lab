@@ -1,0 +1,24 @@
+{
+  "title": "Machine Learning Best Practices",
+  "author": "AI Research Team",
+  "sections": [
+    {
+      "heading": "Data Preparation",
+      "content": "Clean your data thoroughly. Remove duplicates, handle missing values, and normalize features. Quality data is the foundation of any successful ML project."
+    },
+    {
+      "heading": "Model Selection",
+      "content": "Start with simple models like linear regression or decision trees. Use cross-validation to evaluate performance. Complex models like deep neural networks should only be used when simpler approaches fail."
+    },
+    {
+      "heading": "Hyperparameter Tuning",
+      "content": "Use grid search or random search to find optimal hyperparameters. Avoid overfitting by using validation sets. Monitor metrics like precision, recall, and F1-score."
+    }
+  ],
+  "tags": ["machine-learning", "best-practices", "data-science"],
+  "metadata": {
+    "created": "2025-01-15",
+    "version": "1.0",
+    "license": "MIT"
+  }
+}

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<documentation>
+  <article id="rag-101">
+    <title>Introduction to Retrieval Augmented Generation</title>
+    <author>
+      <name>Dr. Sarah Chen</name>
+      <affiliation>AI Institute</affiliation>
+    </author>
+    <abstract>
+      RAG combines retrieval systems with language models to provide grounded, 
+      factual responses. This approach reduces hallucinations and enables LLMs 
+      to access up-to-date information beyond their training data.
+    </abstract>
+    <section>
+      <heading>Core Components</heading>
+      <paragraph>
+        A RAG system consists of three main parts: a document store, 
+        an embedding model, and a language model. Documents are chunked 
+        and embedded into vectors for efficient retrieval.
+      </paragraph>
+    </section>
+    <section>
+      <heading>Benefits</heading>
+      <list>
+        <item>Reduces hallucinations by grounding responses in facts</item>
+        <item>Enables access to private or recent information</item>
+        <item>More cost-effective than fine-tuning large models</item>
+        <item>Easy to update knowledge without retraining</item>
+      </list>
+    </section>
+    <references>
+      <reference>Lewis et al. 2020. Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks</reference>
+      <reference>Gao et al. 2023. Retrieval-Augmented Generation for Large Language Models: A Survey</reference>
+    </references>
+  </article>
+</documentation>

@@ -2,13 +2,18 @@
 Unit tests for adaptive chunking with retry logic
 """
 import pytest
+from unittest.mock import Mock
 from src.document_processor import DocumentProcessor, EmbeddingProvider
 
 
 def test_aggressive_chunk_size():
     """Test that default chunk size is balanced for RAG quality (2000)"""
-    # Use Vertex AI provider (default) - doesn't require sentence_transformers
-    processor = DocumentProcessor()
+    # Use mock client for Vertex AI (we only test chunking, not embeddings)
+    mock_client = Mock()
+    processor = DocumentProcessor(
+        embedding_provider=EmbeddingProvider.VERTEX_AI,
+        genai_client=mock_client
+    )
     
     assert processor.chunk_size == 2000
     assert processor.chunk_overlap == 200
@@ -16,9 +21,11 @@ def test_aggressive_chunk_size():
 
 def test_chunking_with_large_chunks():
     """Test that large chunks are created correctly"""
-    processor = DocumentProcessor()
-    
-    # Create text that would be ~20 chunks with old size (500), ~5 with new size (2000)
+    mock_client = Mock()
+    processor = DocumentProcessor(
+        embedding_provider=EmbeddingProvider.VERTEX_AI,
+        genai_client=mock_client
+    )# Create text that would be ~20 chunks with old size (500), ~5 with new size (2000)
     text = "This is a sentence. " * 500  # 10,000 chars
     
     chunks = processor.chunk_text(text)
@@ -34,7 +41,11 @@ def test_chunking_with_large_chunks():
 
 def test_chunk_metadata_still_correct():
     """Ensure chunk metadata is preserved with new size"""
-    processor = DocumentProcessor()
+    mock_client = Mock()
+    processor = DocumentProcessor(
+        embedding_provider=EmbeddingProvider.VERTEX_AI,
+        genai_client=mock_client
+    )
     
     text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
     chunks = processor.chunk_text(text)
@@ -53,7 +64,11 @@ def test_chunk_metadata_still_correct():
 
 def test_large_file_chunking():
     """Test chunking with the problematic bug_too_many.txt file"""
-    processor = DocumentProcessor()
+    mock_client = Mock()
+    processor = DocumentProcessor(
+        embedding_provider=EmbeddingProvider.VERTEX_AI,
+        genai_client=mock_client
+    )
     
     # Load the fixture
     with open("tests/fixtures/documents/bug_too_many.txt", "r") as f:

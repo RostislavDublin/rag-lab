@@ -39,12 +39,16 @@ def test_documents():
     docs = {
         "txt": fixtures_dir / "bug_too_many.txt",  # Large file to test splitting
         "pdf": fixtures_dir / "google_agent_quality.pdf",
-        "pdf_context": fixtures_dir / "google_context_engineering.pdf"
+        "pdf_context": fixtures_dir / "google_context_engineering.pdf",
+        "md": fixtures_dir / "vector_databases.md",  # Markdown file
+        "json": fixtures_dir / "sample_data.json",  # Structured data (JSON → YAML)
     }
     
     # Calculate hashes for selective cleanup (preserves user documents)
     docs["txt_hash"] = calculate_file_hash(docs["txt"])
     docs["pdf_hash"] = calculate_file_hash(docs["pdf"])
+    docs["md_hash"] = calculate_file_hash(docs["md"])
+    docs["json_hash"] = calculate_file_hash(docs["json"])
     
     return docs
 
@@ -56,7 +60,7 @@ def cleanup_test_documents(request, test_documents):
     
     # Delete test documents by hash (if they exist from previous run)
     deleted_before = 0
-    for hash_key in ["txt_hash", "pdf_hash"]:
+    for hash_key in ["txt_hash", "pdf_hash", "md_hash"]:
         file_hash = test_documents[hash_key]
         response = requests.delete(f"{API_BASE}/v1/documents/by-hash/{file_hash}", timeout=30)
         if response.status_code == 200:
@@ -75,7 +79,7 @@ def cleanup_test_documents(request, test_documents):
     if not request.config.getoption("--no-cleanup"):
         print("\n🧹 Cleaning up test documents after tests...")
         deleted_after = 0
-        for hash_key in ["txt_hash", "pdf_hash"]:
+        for hash_key in ["txt_hash", "pdf_hash", "md_hash", "json_hash"]:
             file_hash = test_documents[hash_key]
             response = requests.delete(f"{API_BASE}/v1/documents/by-hash/{file_hash}", timeout=30)
             if response.status_code == 200:
@@ -141,6 +145,47 @@ def test_03_upload_pdf_document(test_documents):
     print(f"✓ Uploaded: {result['filename']}")
     print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
     print(f"  - Chunks: {result['chunks_created']}")
+
+
+def test_03b_upload_markdown_document(test_documents):
+    """Step 3b: Upload Markdown document (test text format support)"""
+    print("\n=== Step 3b: Upload Markdown document ===")
+    
+    md_path = test_documents["md"]
+    assert md_path.exists(), f"Test file not found: {md_path}"
+    
+    with open(md_path, "rb") as f:
+        files = {"file": (md_path.name, f, "text/markdown")}
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+    
+    assert response.status_code == 200, f"Upload failed: {response.text}"
+    result = response.json()
+    
+    assert result["chunks_created"] > 0, "No chunks created"
+    print(f"✓ Uploaded: {result['filename']}")
+    print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
+    print(f"  - Chunks: {result['chunks_created']}")
+
+
+def test_03c_upload_json_document(test_documents):
+    """Step 3c: Upload JSON document (test YAML conversion of structured data)"""
+    print("\n=== Step 3c: Upload JSON document (YAML conversion) ===")
+    
+    json_path = test_documents["json"]
+    assert json_path.exists(), f"Test file not found: {json_path}"
+    
+    with open(json_path, "rb") as f:
+        files = {"file": (json_path.name, f, "application/json")}
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+    
+    assert response.status_code == 200, f"Upload failed: {response.text}"
+    result = response.json()
+    
+    assert result["chunks_created"] > 0, "No chunks created from JSON (YAML conversion)"
+    print(f"✓ Uploaded: {result['filename']}")
+    print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
+    print(f"  - Chunks: {result['chunks_created']}")
+    print("  - Note: JSON converted to YAML for semantic preservation")
 
 
 def test_04_list_documents():

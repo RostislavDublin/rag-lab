@@ -1,4 +1,14 @@
-"""Integration test for large TXT file processing"""
+"""Integration test for large TXT file processing
+
+These tests verify DocumentProcessor works with real Vertex AI embeddings.
+Requires:
+- GCP credentials configured (uses genai_client fixture from conftest.py)
+- Vertex AI API enabled
+- Network access
+
+To run: pytest tests/integration/test_large_txt_processing.py -v
+To skip: pytest -m 'not integration'
+"""
 
 import pytest
 from pathlib import Path
@@ -6,11 +16,16 @@ from pathlib import Path
 from src.document_processor import DocumentProcessor, EmbeddingProvider
 
 
+# Mark all tests in this file as integration tests
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture
-def doc_processor():
-    """DocumentProcessor with small chunk size for testing"""
+def doc_processor(genai_client):
+    """DocumentProcessor with real Vertex AI embeddings for integration testing"""
     return DocumentProcessor(
         embedding_provider=EmbeddingProvider.VERTEX_AI,
+        genai_client=genai_client,
         chunk_size=500,
         chunk_overlap=50
     )

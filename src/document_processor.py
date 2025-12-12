@@ -22,9 +22,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pymupdf4llm  # PyMuPDF4LLM for LLM-optimized PDF processing
 
-# Suppress vertexai deprecation warning - we're using the recommended API
-warnings.filterwarnings('ignore', message='.*deprecated as of June 24, 2025.*')
-from vertexai.language_models import TextEmbeddingModel
+from google import genai
+from google.genai.types import EmbedContentConfig
 
 
 class EmbeddingProvider(Enum):
@@ -43,6 +42,7 @@ class DocumentProcessor:
         chunk_size: int = 2000,  # Balanced: good RAG quality + retry safety net
         chunk_overlap: int = 200,
         max_input_tokens: Optional[int] = None,  # For testing: artificially limit token size to trigger splits
+        genai_client: Optional[genai.Client] = None,  # New: Google Gen AI client (required for Vertex AI)
     ):
         self.embedding_provider = embedding_provider
         self.chunk_size = chunk_size
@@ -51,7 +51,9 @@ class DocumentProcessor:
         
         # Initialize embedding model based on provider
         if embedding_provider == EmbeddingProvider.VERTEX_AI:
-            self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+            if genai_client is None:
+                raise ValueError("genai_client required for Vertex AI embedding provider")
+            self.genai_client = genai_client
             self.embedding_dimension = 768
         elif embedding_provider == EmbeddingProvider.SENTENCE_TRANSFORMERS:
             # Lazy import to avoid dependency if not used
@@ -111,6 +113,86 @@ class DocumentProcessor:
             with open(txt_source, 'r', encoding='utf-8', errors='replace') as f:
                 return f.read()
     
+    def extract_text_from_json(self, json_source) -> str:
+        """
+        Extract text from JSON file and convert to YAML format
+        
+        YAML is optimal for RAG because:
+        - Minimal syntax noise (no {}, "", commas)
+        - Preserves structure and semantics
+        - LLM-friendly (well represented in training data)
+        - Compact (more context per chunk)
+        
+        Args:
+            json_source: JSON bytes or file path
+        
+        Returns:
+            YAML representation of JSON data
+        """
+        import json
+        import yaml
+        
+        # Load JSON
+        if isinstance(json_source, bytes):
+            data = json.loads(json_source.decode('utf-8'))
+        else:
+            with open(json_source, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        
+        # Convert to YAML (preserves all structure and semantics)
+        yaml_text = yaml.dump(
+            data,
+            default_flow_style=False,  # Use block style (readable)
+            allow_unicode=True,         # Support non-ASCII
+            sort_keys=False             # Preserve original order
+        )
+        
+        return yaml_text
+    
+    def extract_text_from_xml(self, xml_source) -> str:
+        """
+        Extract text from XML file and convert to YAML format
+        
+        Uses xmltodict for clean conversion preserving:
+        - Element structure (hierarchy)
+        - Attributes (prefixed with @)
+        - Text content (as #text when mixed with attributes)
+        - Semantic meaning of tags
+        
+        Args:
+            xml_source: XML bytes or file path
+        
+        Returns:
+            YAML representation of XML data
+        """
+        import xmltodict
+        import yaml
+        
+        # Parse XML to dict
+        if isinstance(xml_source, bytes):
+            xml_string = xml_source.decode('utf-8')
+        else:
+            with open(xml_source, 'r', encoding='utf-8') as f:
+                xml_string = f.read()
+        
+        # Convert XML to OrderedDict (preserves structure and attributes)
+        data = xmltodict.parse(
+            xml_string,
+            attr_prefix='@',      # Attributes get @ prefix
+            cdata_key='#text',    # Text content key
+            force_list=False      # Don't force single items into lists
+        )
+        
+        # Convert to YAML (clean, readable format for LLM)
+        yaml_text = yaml.dump(
+            data,
+            default_flow_style=False,  # Block style (readable)
+            allow_unicode=True,         # Support non-ASCII
+            sort_keys=False             # Preserve order
+        )
+        
+        return yaml_text
+    
     def extract_text(self, file_content: bytes, file_type: str) -> str:
         """
         Extract text from file based on type
@@ -127,12 +209,36 @@ class DocumentProcessor:
         if file_ext.startswith('.'):
             file_ext = file_ext[1:]
         
+        # PDF format
         if file_ext in ('pdf', 'application/pdf'):
             return self.extract_text_from_pdf(file_content)
-        elif file_ext in ('txt', 'text/plain'):
+        
+        # Structured formats - smart parsing
+        elif file_ext in ('json', 'application/json'):
+            return self.extract_text_from_json(file_content)
+        
+        elif file_ext in ('xml', 'application/xml', 'text/xml'):
+            return self.extract_text_from_xml(file_content)
+        
+        # Plain text formats - simple decode
+        elif file_ext in {
+            'txt', 'text/plain',
+            'md', 'markdown', 'text/markdown',
+            'rst', 'text/x-rst',
+            'csv', 'text/csv',
+            'log', 'text/x-log',
+            'yaml', 'yml', 'application/x-yaml', 'text/yaml',
+            'toml', 'application/toml',
+            'ini', 'text/plain',
+            'py', 'text/x-python',
+            'js', 'application/javascript',
+            'html', 'text/html',
+            'css', 'text/css',
+        }:
             return self.extract_text_from_txt(file_content)
+        
         else:
-            raise ValueError(f"Unsupported file type: {file_type}")
+            raise ValueError(f"Unsupported file type: {file_type}. Supported: PDF or text-based formats (txt, md, json, csv, xml, yaml, etc.)")
     
     def chunk_text(self, text: str) -> List[Tuple[str, dict]]:
         """
@@ -269,9 +375,12 @@ class DocumentProcessor:
                         # Simulate token limit error
                         raise Exception(f"400 Token limit exceeded: {estimated_tokens} > {self.max_input_tokens}")
                 
-                # Try to get embedding (auto_truncate=False to catch errors)
-                emb = self.embedding_model.get_embeddings([text])
-                return [(text, emb[0].values)]
+                # Try to get embedding using new Google Gen AI SDK
+                response = self.genai_client.models.embed_content(
+                    model="text-embedding-005",
+                    contents=text,
+                )
+                return [(text, response.embeddings[0].values)]
             
             except Exception as e:
                 error_msg = str(e).lower()

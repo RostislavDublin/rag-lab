@@ -1,0 +1,155 @@
+# RAG Lab - Copilot Instructions
+
+## Project Overview
+
+**RAG Lab** is an experimental workspace for exploring Retrieval Augmented Generation (RAG) technologies, primarily using Google Cloud AI services.
+
+## Purpose
+
+- Learning and experimenting with RAG architectures
+- Understanding Google Vertex AI RAG capabilities
+- Exploring multimodal RAG implementations
+- Testing vector database options
+- Building production-ready RAG patterns
+
+## Tech Stack
+
+- **Primary**: Google Vertex AI, Gemini, Text/Multimodal Embeddings
+- **Vector Stores**: Vertex AI Vector Search, PostgreSQL + pgvector, AlloyDB
+- **Language**: Python 3.10+
+- **API Framework**: FastAPI + uvicorn
+- **Reference**: Google's generative-ai repository for authoritative examples
+
+## Project Status
+
+Active learning project - experimentation and prototyping phase.
+
+## 🚨 LOCAL DEVELOPMENT - ABSOLUTE IRON RULES 🚨
+
+**READ THIS BEFORE EVERY SERVER START! NO EXCEPTIONS!**
+
+### PREREQUISITES (CHECK FIRST!):
+
+1. **`.env.local` MUST EXIST** in `/Users/Rostislav_Dublin/src/drs/ai/rag-lab/`
+   - Contains DATABASE_URL, GCP_PROJECT_ID, GCS_BUCKET_NAME, etc.
+   - If missing: copy from `.env.local.example` and fill in real values
+   - Server will FAIL without this file!
+
+2. **`.venv` MUST EXIST** in `/Users/Rostislav_Dublin/src/drs/ai/rag-lab/`
+   - Virtual environment with all dependencies installed
+   - If missing: run `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
+
+### THE ONLY CORRECT WAY TO START SERVER:
+
+```bash
+# STEP 1: Go to rag-lab directory (ALWAYS!)
+cd /Users/Rostislav_Dublin/src/drs/ai/rag-lab
+
+# STEP 2: Activate venv (MANDATORY!)
+source .venv/bin/activate
+
+# STEP 3: Start uvicorn (with --reload!)
+uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+### 🔴 CRITICAL - NEVER FORGET THESE STEPS:
+
+**STEP 0 (PREREQUISITE)** - `.env.local` MUST EXIST
+   - File location: `/Users/Rostislav_Dublin/src/drs/ai/rag-lab/.env.local`
+   - Contains: DATABASE_URL, GCP_PROJECT_ID, GCS_BUCKET_NAME
+   - If server crashes on startup with DB error: check .env.local!
+   - FastAPI loads .env.local automatically (higher priority than .env)
+
+1. **STEP 1 IS MANDATORY** - `cd /Users/Rostislav_Dublin/src/drs/ai/rag-lab`
+   - Without this: .venv won't be found
+   - Current directory MUST be `/Users/Rostislav_Dublin/src/drs/ai/rag-lab`
+   - Check with `pwd` if unsure
+
+2. **STEP 2 IS MANDATORY** - `source .venv/bin/activate`
+   - Without this: uvicorn command won't be found
+   - You MUST see `(.venv)` in terminal prompt after activation
+   - If activation fails: venv doesn't exist or wrong directory
+
+3. **STEP 3 IS MANDATORY** - `uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload`
+   - NEVER use `python3 -m uvicorn` (won't work without venv active)
+   - NEVER use Docker (that's for deployment, not local dev)
+   - ALWAYS include `--reload` (auto-reload on code changes)
+
+### ✅ HOW TO START SERVER (AI ASSISTANT CHECKLIST):
+
+When user asks to start/restart server:
+
+- [ ] Step 1: `cd /Users/Rostislav_Dublin/src/drs/ai/rag-lab`
+- [ ] Step 2: `source .venv/bin/activate`  
+- [ ] Step 3: `uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload`
+- [ ] Run as background process (isBackground=true)
+
+**ALL THREE STEPS IN ONE COMMAND:**
+
+```bash
+cd /Users/Rostislav_Dublin/src/drs/ai/rag-lab && source .venv/bin/activate && uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+### 🟢 HOT RELOAD - NEVER RESTART SERVER!
+
+- Code changes apply **automatically** (watch terminal for "Detected change, reloading...")
+- **NEVER kill/restart** server after code edits
+- Only restart if server crashed or you changed dependencies
+
+### 🔴 TO STOP SERVER:
+
+- `Ctrl+C` in terminal
+- If stuck: `lsof -ti:8080 | xargs kill`
+
+### 🟢 AFTER SERVER STARTS:
+
+- API: http://localhost:8080
+- Swagger UI: http://localhost:8080/docs  
+- Health check: `curl http://localhost:8080/health`
+
+## Important Notes
+
+- **Service Account Keys**: Never commit `service-account-key.json` or similar credential files
+- **Data Files**: Large datasets and model files should be in `.gitignore`
+- **Experiments**: Ad-hoc experiments belong in `experiments/` directory
+- **Reusable Code**: Production-quality code goes in `src/`
+
+## Google AI SDK Usage - CRITICAL
+
+**ALWAYS use the NEW Google Gen AI SDK (not deprecated Vertex AI modules):**
+
+- ✅ **USE:** `from google import genai`
+- ✅ **USE:** `client = genai.Client(vertexai=True, project=..., location=...)`
+- ✅ **USE:** `client.models.embed_content(model="text-embedding-005", contents=...)`
+- ✅ **USE:** `client.models.generate_content(model="gemini-2.5-flash", contents=...)`
+
+- ❌ **NEVER USE:** `from vertexai.language_models import TextEmbeddingModel`
+- ❌ **NEVER USE:** `from vertexai.generative_models import GenerativeModel`
+- ❌ **NEVER USE:** `TextEmbeddingModel.from_pretrained(...)`
+- ❌ **NEVER USE:** `model.get_embeddings([...])`
+
+**Why:**
+- `vertexai.language_models`, `vertexai.generative_models`, `vertexai.vision_models` are **deprecated** as of June 24, 2025
+- They will be **removed** on June 24, 2026
+- Migration guide: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/deprecations/genai-vertexai-sdk
+
+**Exceptions:**
+- RAG API still uses `from vertexai import rag` (stable, not deprecated)
+- `vertexai.init()` still needed for initialization
+
+**Install:**
+```bash
+pip install google-genai>=0.3.0
+```
+
+## Git Workflow
+
+Follow the same git workflow as other projects:
+- DO NOT commit/push without explicit user authorization
+- User must say "commit", "push", "c&p", or equivalent
+- Show git status and wait for confirmation
+
+## Learning Resources
+
+- Primary: `/Users/Rostislav_Dublin/src/drs/ai/generative-ai/` (Google's official examples)
+- Secondary: `/Users/Rostislav_Dublin/src/drs/ai/capstone/` (practical RAG Corpus patterns)

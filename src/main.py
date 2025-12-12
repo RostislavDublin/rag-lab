@@ -37,14 +37,13 @@ elif env_file.exists():
 else:
     print("WARNING: No .env.local or .env file found - using system environment variables only")
 
-# Suppress vertexai deprecation warning - we're using the recommended API
-warnings.filterwarnings('ignore', message='.*deprecated as of June 24, 2025.*')
 import vertexai
 from fastapi import FastAPI, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from vertexai.language_models import TextEmbeddingModel
+from google import genai
+from google.genai.types import EmbedContentConfig, HttpOptions
 
 # Import utilities
 from .utils import calculate_file_hash
@@ -67,20 +66,20 @@ APP_START_TIME = datetime.utcnow().isoformat() + "Z"
 document_storage = DocumentStorage(bucket_name=GCS_BUCKET)
 
 # Global instances
-text_embedding_model = None
+genai_client = None
 document_processor = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and cleanup resources"""
-    global text_embedding_model, document_processor
+    global genai_client, document_processor
     
-    # Startup: Initialize Vertex AI
-    print(f"Initializing Vertex AI (project={PROJECT_ID}, location={LOCATION})...")
+    # Startup: Initialize Vertex AI with new Google Gen AI SDK
+    print(f"Initializing Google Gen AI (project={PROJECT_ID}, location={LOCATION})...")
     vertexai.init(project=PROJECT_ID, location=LOCATION)
-    text_embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
-    print("Vertex AI initialized successfully")
+    genai_client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+    print("Google Gen AI client initialized successfully")
     
     # Initialize database
     print("Connecting to database...")
@@ -88,9 +87,10 @@ async def lifespan(app: FastAPI):
     await vector_db.init_schema()
     print("Database initialized successfully")
     
-    # Initialize document processor
+    # Initialize document processor with genai client
     document_processor = DocumentProcessor(
-        embedding_provider=EmbeddingProvider.VERTEX_AI
+        embedding_provider=EmbeddingProvider.VERTEX_AI,
+        genai_client=genai_client
     )
     print("Document processor initialized")
     
@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
     # Shutdown: Cleanup resources
     print("Shutting down...")
     await vector_db.disconnect()
-    text_embedding_model = None
+    genai_client = None
     document_processor = None
 
 
@@ -249,7 +249,11 @@ async def upload_document(file: UploadFile = File(...)):
     - Generates embeddings
     - Stores in two-level architecture (original + chunks)
     
-    Supported formats: .pdf, .txt
+    Supported formats:
+    - PDF: .pdf
+    - Text: .txt, .md, .markdown, .rst, .log
+    - Data: .json, .csv, .xml, .yaml, .yml, .toml, .ini
+    - Code: .py, .js, .html, .css
     
     Example:
         POST /v1/documents/upload
@@ -257,16 +261,25 @@ async def upload_document(file: UploadFile = File(...)):
         file: document.pdf
     """
     try:
+        # Supported file extensions
+        SUPPORTED_EXTENSIONS = {
+            '.pdf', '.txt', '.md', '.markdown', '.rst', '.log',
+            '.json', '.csv', '.xml', '.yaml', '.yml', '.toml', '.ini',
+            '.py', '.js', '.html', '.css'
+        }
+        
         # Validate file type before reading
         filename_lower = file.filename.lower()
-        if not (filename_lower.endswith('.pdf') or filename_lower.endswith('.txt')):
+        file_ext = Path(filename_lower).suffix
+        
+        if file_ext not in SUPPORTED_EXTENSIONS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only PDF and TXT files are supported"
+                detail=f"Unsupported file type '{file_ext}'. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
             )
         
-        # Determine file type
-        file_type = 'pdf' if filename_lower.endswith('.pdf') else 'txt'
+        # Determine file type (pdf or text-based)
+        file_type = 'pdf' if file_ext == '.pdf' else 'txt'
         content_type = 'application/pdf' if file_type == 'pdf' else 'text/plain'
         
         # Read file content
@@ -417,15 +430,18 @@ async def create_embedding(request: EmbeddingRequest):
         }
     """
     try:
-        if text_embedding_model is None:
+        if genai_client is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Embedding model not initialized",
             )
         
-        # Generate embedding
-        embeddings = text_embedding_model.get_embeddings([request.text])
-        embedding_vector = embeddings[0].values
+        # Generate embedding using new Google Gen AI SDK
+        response = genai_client.models.embed_content(
+            model="text-embedding-005",
+            contents=request.text,
+        )
+        embedding_vector = response.embeddings[0].values
         
         return EmbeddingResponse(
             embedding=embedding_vector,
@@ -456,15 +472,18 @@ async def query_rag(request: QueryRequest):
         }
     """
     try:
-        if text_embedding_model is None:
+        if genai_client is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Embedding model not initialized",
             )
         
-        # Generate query embedding
-        embeddings = text_embedding_model.get_embeddings([request.query])
-        query_embedding = embeddings[0].values
+        # Generate query embedding using new Google Gen AI SDK
+        response = genai_client.models.embed_content(
+            model="text-embedding-005",
+            contents=request.query,
+        )
+        query_embedding = response.embeddings[0].values
         
         # Vector search (returns chunk indices + doc_uuid)
         results = await vector_db.search_similar_chunks(

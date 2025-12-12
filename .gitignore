@@ -37,6 +37,9 @@ ENV/
 *.swo
 *~
 
+# Track copilot instructions (exception to global ignore if exists)
+!.github/copilot-instructions.md
+
 # OS
 .DS_Store
 Thumbs.db
