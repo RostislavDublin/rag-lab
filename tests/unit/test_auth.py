@@ -1,15 +1,15 @@
 """
 Unit tests for authentication module
 
-Tests JWT token validation, Google Identity verification, and whitelist authorization.
+Tests vendor-independent JWT token validation using JWKS and whitelist authorization.
 """
 
 import os
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 from fastapi import HTTPException
 from src.auth import (
-    verify_google_token,
+    verify_jwt_token,
     check_authorization,
     get_current_user,
     AuthError,
@@ -18,11 +18,11 @@ from src.auth import (
 
 
 class TestTokenVerification:
-    """Test Google ID token verification"""
+    """Test JWT token verification using JWKS"""
     
-    def test_verify_google_token_dev_mode(self, monkeypatch):
-        """Test dev mode when GOOGLE_CLIENT_ID is empty"""
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+    def test_verify_jwt_token_dev_mode(self, monkeypatch):
+        """Test dev mode when AUDIENCE is empty"""
+        monkeypatch.setenv("AUDIENCE", "")
         
         # Create simple JWT without signature (for dev mode)
         import jwt
@@ -33,97 +33,143 @@ class TestTokenVerification:
         )
         
         # Should decode without verification in dev mode
-        user_info = verify_google_token(token)
+        user_info = verify_jwt_token(token)
         
         assert user_info["email"] == "test@example.com"
         assert user_info["sub"] == "test_user_id"
     
-    def test_verify_google_token_invalid_format(self, monkeypatch):
+    def test_verify_jwt_token_invalid_format(self, monkeypatch):
         """Test invalid token format"""
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+        monkeypatch.setenv("AUDIENCE", "")
         
         with pytest.raises(AuthError) as exc_info:
-            verify_google_token("not_a_jwt_token")
+            verify_jwt_token("not_a_jwt_token")
         
         assert "Invalid token format" in str(exc_info.value.detail)
     
-    @patch("src.auth.id_token.verify_oauth2_token")
-    def test_verify_google_token_production(self, mock_verify, monkeypatch):
-        """Test production mode with Google verification"""
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "test_client_id.apps.googleusercontent.com")
+    def test_verify_jwt_token_production(self, monkeypatch):
+        """Test production mode with JWKS verification"""
+        monkeypatch.setenv("AUDIENCE", "test_client_id.apps.googleusercontent.com")
+        monkeypatch.setenv("JWKS_URL", "https://www.googleapis.com/oauth2/v3/certs")
+        monkeypatch.setenv("ISSUER", "https://accounts.google.com")
         
-        # Reload auth module to pick up new GOOGLE_CLIENT_ID
+        # Reload auth module to pick up new AUDIENCE
         import importlib
         from src import auth
         importlib.reload(auth)
         
-        # Mock Google's verification response
-        mock_verify.return_value = {
-            "email": "user@gmail.com",
-            "sub": "google_user_123",
-            "name": "Test User",
-            "iss": "accounts.google.com",
-        }
+        # Create a valid JWT token for testing
+        import jwt as pyjwt
+        test_token = pyjwt.encode(
+            {"email": "user@gmail.com", "sub": "google_user_123", "name": "Test User"},
+            "test_secret",
+            algorithm="HS256"
+        )
         
-        user_info = auth.verify_google_token("valid_google_token")
-        
-        assert user_info["email"] == "user@gmail.com"
-        assert user_info["sub"] == "google_user_123"
-        assert user_info["name"] == "Test User"
-        
-        # Verify Google verification was called
-        mock_verify.assert_called_once()
+        # Mock both PyJWKClient and jwt.decode at src.auth level
+        with patch("src.auth.PyJWKClient") as mock_jwks_client, \
+             patch("src.auth.jwt.decode") as mock_jwt_decode:
+            
+            # Mock JWKS client and signing key
+            mock_signing_key = Mock()
+            mock_signing_key.key = "test_public_key"
+            mock_client_instance = Mock()
+            mock_client_instance.get_signing_key_from_jwt.return_value = mock_signing_key
+            mock_jwks_client.return_value = mock_client_instance
+            
+            # Mock jwt.decode response
+            mock_jwt_decode.return_value = {
+                "email": "user@gmail.com",
+                "sub": "google_user_123",
+                "name": "Test User",
+            }
+            
+            user_info = auth.verify_jwt_token(test_token)
+            
+            assert user_info["email"] == "user@gmail.com"
+            assert user_info["sub"] == "google_user_123"
+            assert user_info["name"] == "Test User"
+            
+            # Verify JWKS client was called
+            mock_jwks_client.assert_called_once()
+            mock_jwt_decode.assert_called_once()
         
         # Restore dev mode
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+        monkeypatch.setenv("AUDIENCE", "")
         importlib.reload(auth)
     
-    @patch("src.auth.id_token.verify_oauth2_token")
-    def test_verify_google_token_invalid_issuer(self, mock_verify, monkeypatch):
-        """Test token from wrong issuer"""
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "test_client_id")
+    def test_verify_jwt_token_invalid_issuer(self, monkeypatch):
+        """Test token with invalid issuer"""
+        monkeypatch.setenv("AUDIENCE", "test_client_id")
+        monkeypatch.setenv("ISSUER", "https://accounts.google.com")
         
-        # Reload auth module to pick up GOOGLE_CLIENT_ID
+        # Reload auth module to pick up AUDIENCE
         import importlib
         from src import auth
         importlib.reload(auth)
         
-        # Mock token from non-Google issuer
-        mock_verify.return_value = {
-            "email": "user@example.com",
-            "sub": "fake_123",
-            "iss": "evil.com",  # Wrong issuer
-        }
+        # Create a valid JWT token
+        import jwt as pyjwt
+        test_token = pyjwt.encode(
+            {"email": "user@example.com", "sub": "fake_123"},
+            "test_secret",
+            algorithm="HS256"
+        )
         
-        with pytest.raises(auth.AuthError) as exc_info:
-            auth.verify_google_token("fake_token")
-        
-        assert "Invalid token issuer" in str(exc_info.value.detail)
+        with patch("src.auth.PyJWKClient") as mock_jwks_client, \
+             patch("src.auth.jwt.decode") as mock_jwt_decode:
+            
+            # Mock JWKS client
+            mock_signing_key = Mock()
+            mock_signing_key.key = "test_key"
+            mock_client_instance = Mock()
+            mock_client_instance.get_signing_key_from_jwt.return_value = mock_signing_key
+            mock_jwks_client.return_value = mock_client_instance
+            
+            # Mock jwt.decode raising InvalidTokenError for wrong issuer
+            from jwt.exceptions import InvalidTokenError
+            mock_jwt_decode.side_effect = InvalidTokenError("Invalid issuer")
+            
+            with pytest.raises(auth.AuthError) as exc_info:
+                auth.verify_jwt_token(test_token)
+            
+            assert "Invalid token" in str(exc_info.value.detail)
         
         # Restore dev mode
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+        monkeypatch.setenv("AUDIENCE", "")
         importlib.reload(auth)
     
-    @patch("src.auth.id_token.verify_oauth2_token")
-    def test_verify_google_token_expired(self, mock_verify, monkeypatch):
+    def test_verify_jwt_token_expired(self, monkeypatch):
         """Test expired token"""
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "test_client_id")
+        monkeypatch.setenv("AUDIENCE", "test_client_id")
         
-        # Reload to pick up GOOGLE_CLIENT_ID
+        # Reload to pick up AUDIENCE
         import importlib
         from src import auth
         importlib.reload(auth)
         
-        # Mock Google raising ValueError for expired token
-        mock_verify.side_effect = ValueError("Token expired")
+        # Create a valid JWT token
+        import jwt as pyjwt
+        test_token = pyjwt.encode(
+            {"email": "user@example.com", "sub": "user_123"},
+            "test_secret",
+            algorithm="HS256"
+        )
         
-        with pytest.raises(auth.AuthError) as exc_info:
-            auth.verify_google_token("fake_expired_token")
-        
-        assert "Invalid token" in str(exc_info.value.detail)
+        with patch("src.auth.PyJWKClient") as mock_jwks_client:
+            # Mock JWKS client to raise ExpiredSignatureError when getting signing key
+            from jwt.exceptions import ExpiredSignatureError
+            mock_client_instance = Mock()
+            mock_client_instance.get_signing_key_from_jwt.side_effect = ExpiredSignatureError("Token expired")
+            mock_jwks_client.return_value = mock_client_instance
+            
+            with pytest.raises(auth.AuthError) as exc_info:
+                auth.verify_jwt_token(test_token)
+            
+            assert "expired" in str(exc_info.value.detail).lower()
         
         # Restore dev mode
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+        monkeypatch.setenv("AUDIENCE", "")
         importlib.reload(auth)
 
 
@@ -182,7 +228,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_get_current_user_success(self, monkeypatch):
         """Test successful authentication and authorization"""
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+        monkeypatch.setenv("AUDIENCE", "")
         monkeypatch.setenv("ALLOWED_USERS", "test@example.com")
         
         from src import auth
@@ -206,7 +252,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_get_current_user_unauthorized(self, monkeypatch):
         """Test unauthorized user (not in whitelist)"""
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+        monkeypatch.setenv("AUDIENCE", "")
         monkeypatch.setenv("ALLOWED_USERS", "admin@example.com")
         
         from src import auth
@@ -230,7 +276,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_get_current_user_invalid_token(self, monkeypatch):
         """Test invalid token format"""
-        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+        monkeypatch.setenv("AUDIENCE", "")
         
         import importlib
         from src import auth

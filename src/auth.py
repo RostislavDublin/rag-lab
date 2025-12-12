@@ -1,34 +1,42 @@
 """
 Authentication module for RAG Lab
 
-Provides JWT token validation using Google Identity Platform.
-Supports OAuth2 Bearer tokens with Google-signed JWTs.
+Vendor-independent JWT token validation using JWKS (JSON Web Key Set).
+Supports any OIDC-compliant provider: Google, Azure AD, Auth0, Okta, etc.
 
 Authorization:
 - Whitelist-based: only emails in ALLOWED_USERS env var can access API
 - Future: Can extend to role-based access control (RBAC)
+
+Configuration (environment variables):
+- JWKS_URL: URL to provider's JWKS endpoint (e.g., https://www.googleapis.com/oauth2/v3/certs)
+- ISSUER: Expected token issuer (e.g., https://accounts.google.com)
+- AUDIENCE: Expected audience (client ID)
+- ALLOWED_USERS: Comma-separated whitelist of emails
 """
 
 import os
 from typing import Optional
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from google.auth.transport import requests
-from google.oauth2 import id_token
 import jwt
+from jwt import PyJWKClient
+from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 
 # Security scheme for Swagger UI
 security = HTTPBearer(
-    scheme_name="Google OAuth2",
-    description="Google ID Token (OAuth2). Get from Google Sign-In or gcloud auth print-identity-token"
+    scheme_name="OAuth2 JWT",
+    description="JWT token from OIDC provider (Google, Azure AD, Auth0, etc.)"
 )
 
 # Load config from environment
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+JWKS_URL = os.getenv("JWKS_URL", "https://www.googleapis.com/oauth2/v3/certs")  # Google default
+ISSUER = os.getenv("ISSUER", "https://accounts.google.com")  # Google default
+AUDIENCE = os.getenv("AUDIENCE", "")  # Client ID
 ALLOWED_USERS_STR = os.getenv("ALLOWED_USERS", "javaisforever@gmail.com")
 ALLOWED_USERS = [email.strip() for email in ALLOWED_USERS_STR.split(",") if email.strip()]
 
-print(f"Auth configured: {len(ALLOWED_USERS)} allowed users")
+print(f"Auth configured: {len(ALLOWED_USERS)} allowed users, JWKS={JWKS_URL}")
 
 
 class AuthError(HTTPException):
@@ -41,24 +49,30 @@ class AuthError(HTTPException):
         )
 
 
-def verify_google_token(token: str) -> dict:
+def verify_jwt_token(token: str) -> dict:
     """
-    Verify Google ID token and return user info
+    Verify JWT token using JWKS (vendor-independent)
+    
+    Supports any OIDC-compliant provider:
+    - Google (https://www.googleapis.com/oauth2/v3/certs)
+    - Azure AD (https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys)
+    - Auth0 (https://{domain}/.well-known/jwks.json)
+    - Okta (https://{domain}/oauth2/default/v1/keys)
     
     Args:
-        token: Google ID token (JWT)
+        token: JWT token from Authorization header
     
     Returns:
-        dict with user info: {"email": "user@example.com", "sub": "google_user_id"}
+        dict with user claims: {"email": "user@example.com", "sub": "user_id", ...}
     
     Raises:
-        AuthError: If token is invalid or expired
+        AuthError: If token is invalid, expired, or signature verification fails
     """
     try:
-        # For development: if GOOGLE_CLIENT_ID is empty, allow any token for testing
+        # Development mode: if AUDIENCE is empty, allow any token for testing
         # REMOVE THIS IN PRODUCTION - security risk!
-        if not GOOGLE_CLIENT_ID:
-            print("WARNING: GOOGLE_CLIENT_ID not set - using insecure dev mode")
+        if not AUDIENCE:
+            print("WARNING: AUDIENCE not set - using insecure dev mode")
             # Decode without verification (DEV ONLY)
             try:
                 unverified = jwt.decode(token, options={"verify_signature": False})
@@ -69,27 +83,33 @@ def verify_google_token(token: str) -> dict:
             except Exception as e:
                 raise AuthError(f"Invalid token format: {str(e)}")
         
-        # Production: verify token with Google
-        request = requests.Request()
-        id_info = id_token.verify_oauth2_token(
-            token, 
-            request, 
-            GOOGLE_CLIENT_ID,
-            clock_skew_in_seconds=10  # Allow 10s clock skew
+        # Production: verify token using JWKS
+        jwks_client = PyJWKClient(JWKS_URL)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        
+        data = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=AUDIENCE,
+            issuer=ISSUER,
+            options={
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_aud": True,
+                "verify_iss": True,
+            }
         )
         
-        # Validate issuer
-        if id_info.get("iss") not in ["accounts.google.com", "https://accounts.google.com"]:
-            raise AuthError("Invalid token issuer")
-        
         return {
-            "email": id_info.get("email"),
-            "sub": id_info.get("sub"),
-            "name": id_info.get("name"),
+            "email": data.get("email"),
+            "sub": data.get("sub"),
+            "name": data.get("name"),
         }
         
-    except ValueError as e:
-        # Token verification failed
+    except ExpiredSignatureError:
+        raise AuthError("Token has expired")
+    except InvalidTokenError as e:
         raise AuthError(f"Invalid token: {str(e)}")
     except Exception as e:
         raise AuthError(f"Token verification failed: {str(e)}")
@@ -134,8 +154,8 @@ async def get_current_user(
     """
     token = credentials.credentials
     
-    # Verify token with Google
-    user_info = verify_google_token(token)
+    # Verify token using JWKS
+    user_info = verify_jwt_token(token)
     email = user_info["email"]
     
     # Check authorization (whitelist)
