@@ -4,10 +4,12 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Hybrid storage**: PostgreSQL for embeddings, GCS for documents (8.5x cheaper)
 - **UUID-based**: Globally unique, immutable document identifiers
 - **Deduplication**: SHA256 file hashing prevents duplicate uploads
-- **Multi-format support**: PDF and TXT files
+- **Multi-format support**: 17 formats (PDF, TXT, MD, JSON, XML, CSV, YAML, code files, logs)
+- **Structured data**: YAML conversion for JSON/XML preserves semantic information
 - **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
 - **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
+- **Comprehensive testing**: 44 tests (30 unit, 5 integration, 9 e2e)
 
 ## Architecture
 
@@ -108,12 +110,22 @@ curl -X POST http://localhost:8080/v1/documents/upload -F "file=@doc_copy.pdf"
 1. **Create `.env.local` file** (required!):
    ```bash
    cd /Users/Rostislav_Dublin/src/drs/ai/rag-lab
-   cp .env.local.example .env.local
-   # Edit .env.local with real values:
-   # - DATABASE_URL (PostgreSQL connection string)
-   # - GCP_PROJECT_ID
-   # - GCS_BUCKET_NAME
-   # - Other required vars
+   # Create .env.local with required variables:
+   cat > .env.local << 'EOF'
+# Database (Cloud SQL via Proxy or local PostgreSQL)
+DATABASE_URL=postgresql://user:password@localhost:5432/rag_db
+
+# GCP Configuration
+GCP_PROJECT_ID=your-project-id
+GCP_REGION=us-central1
+GCS_BUCKET=your-project-id-rag-documents
+
+# Vertex AI
+VERTEX_AI_LOCATION=us-central1
+
+# FastAPI
+PORT=8080
+EOF
    ```
 
 2. **Setup virtual environment** (one-time):
@@ -221,7 +233,13 @@ curl -X POST http://localhost:8080/v1/embed \
 
 ### Test with Fixtures
 
-The repository includes 4 test documents (22.6KB total) for integration testing:
+The repository includes 14 test documents for comprehensive format testing:
+
+**Text documents (4):** RAG architecture guide, GCP services, FastAPI practices, pgvector guide  
+**Binary (2 PDFs):** Google Agent Quality, Context Engineering  
+**Structured data (4):** sample_data.json, sample_documentation.xml, config.yaml, products.csv  
+**Other formats (3):** vector_databases.md, bug_too_many.txt (large), server.log  
+**Test coverage:** PDF, TXT, MD, JSON (→YAML), XML (→YAML), CSV, YAML, LOG
 
 ```bash
 # Upload test documents
@@ -246,7 +264,15 @@ curl -X POST http://localhost:8080/v1/query \
 
 Upload and process PDF or TXT document. Automatically detects and rejects duplicates.
 
-**Supported formats:** PDF, TXT
+**Supported formats (17 total):**
+- **Documents:** `.pdf`, `.txt`, `.md`, `.markdown`, `.rst`, `.log`
+- **Structured data:** `.json` (→YAML), `.xml` (→YAML), `.csv`, `.yaml`, `.yml`, `.toml`, `.ini`
+- **Code files:** `.py`, `.js`, `.html`, `.css`
+
+**Structured data processing:**
+- JSON/XML files are converted to YAML format to preserve semantic structure
+- Minimizes syntax noise while maintaining full information content
+- LLM-friendly representation for better RAG quality
 
 **Request:**
 ```bash
@@ -254,9 +280,9 @@ Upload and process PDF or TXT document. Automatically detects and rejects duplic
 curl -X POST http://localhost:8080/v1/documents/upload \
   -F "file=@document.pdf"
 
-# TXT file
+# JSON file (converted to YAML internally)
 curl -X POST http://localhost:8080/v1/documents/upload \
-  -F "file=@document.txt"
+  -F "file=@config.json"
 ```
 
 **Response (new document):**
@@ -492,6 +518,38 @@ DATABASE_URL=postgresql://user:pass@/cloudsql/project:region:instance/raglab
 DATABASE_URL=postgresql://raglab:password@localhost:5432/raglab
 ```
 
+### Key Dependencies
+
+**AI & Embeddings:**
+- `google-genai>=0.3.0` - New Google Gen AI SDK for embeddings (replaces deprecated vertexai.language_models)
+- `google-cloud-aiplatform>=1.38.0` - Vertex AI platform integration
+- `vertexai>=1.0.0` - Core Vertex AI initialization (kept for compatibility)
+
+**Document Processing:**
+- `pymupdf>=1.23.0` - PDF text extraction
+- `pymupdf4llm>=0.2.7` - LLM-optimized PDF extraction (PDF → Markdown)
+- `pymupdf_layout==1.26.6` - Improved PDF layout analysis
+- `pyyaml>=6.0` - YAML parsing and generation (JSON/XML → YAML conversion)
+- `xmltodict>=0.13.0` - Clean XML to dict conversion
+
+**Database & Storage:**
+- `psycopg2-binary>=2.9.9` - PostgreSQL driver
+- `pgvector>=0.2.3` - Vector similarity search extension
+- `asyncpg>=0.29.0` - Async PostgreSQL driver for FastAPI
+- `google-cloud-storage>=2.10.0` - GCS client library
+
+**Web Framework:**
+- `fastapi>=0.109.0` - Modern async web framework
+- `uvicorn[standard]>=0.27.0` - ASGI server with hot reload
+- `pydantic>=2.5.0` - Data validation
+- `python-multipart>=0.0.6` - File upload support
+
+**Testing:**
+- `pytest>=7.0.0` - Test framework
+- `pytest-asyncio>=0.21.0` - Async test support
+
+See `requirements.txt` for complete list.
+
 ## Multi-Cloud Portability
 
 ### Storage (PostgreSQL + pgvector)
@@ -506,6 +564,8 @@ DATABASE_URL=postgresql://raglab:password@localhost:5432/raglab
 
 **Current:** Vertex AI text-embedding-005 (768 dimensions)
 
+**Implementation:** Uses new `google-genai` SDK (replaces deprecated `vertexai.language_models`)
+
 **Why text-embedding-005?** Specialized model for English and code tasks with excellent performance. Using 768 dimensions provides good quality while keeping storage costs reasonable.
 
 **Alternatives:**
@@ -518,26 +578,35 @@ DATABASE_URL=postgresql://raglab:password@localhost:5432/raglab
 - Higher dimensions (1024-3072): better quality, requires recreating vector tables and re-embedding all documents
 
 **To switch providers:**
-1. Update embedding model in `document_processor.py` and `main.py`
+1. Update embedding model in `main.py` (genai_client initialization)
 2. Update vector dimension in `database.py` schema
 3. **Regenerate all embeddings** (different dimensions require new vectors)
 4. Fetch extracted text from GCS to avoid re-processing files
 5. Update embeddings in PostgreSQL
 
 ```python
-# Change in src/main.py and src/document_processor.py
-self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
-self.embedding_dimension = 1408
+# Change in src/main.py
+from google import genai
+
+genai_client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+
+# For embeddings - use genai_client.models.embed_content()
+response = genai_client.models.embed_content(
+    model="text-embedding-005",  # or "gemini-embedding-001"
+    contents=text,
+)
+embedding_vector = response.embeddings[0].values
+embedding_dimension = 768  # text-embedding-005
 
 # Update database.py
 CREATE TABLE document_chunks (
-    embedding VECTOR(1408) NOT NULL,  # Match new dimension
+    embedding VECTOR(768) NOT NULL,  # Match new dimension
     ...
 )
 
 # Regeneration workflow:
 # 1. Fetch extracted.txt from GCS: gs://{bucket}/{doc_uuid}/extracted.txt
-# 2. Re-chunk and embed with new provider
+# 2. Re-chunk and embed with new provider (using genai_client)
 # 3. Update embeddings in PostgreSQL
 ```
 
@@ -631,16 +700,36 @@ FROM original_documents;
 
 ### 3. Run Tests
 
+Comprehensive test suite with 44 tests across 3 tiers:
+
 ```bash
-# Unit tests
+# Unit tests (30 tests) - fast, mocked dependencies
 pytest tests/unit/ -v
+# Tests: extraction, chunking, format parsing, utilities
+# Uses Mock() for genai_client - no real API calls
 
-# E2E tests (requires running server)
+# Integration tests (5 tests) - real Vertex AI
+pytest tests/integration/ -v
+# Tests: large file processing, chunking integrity
+# Uses real Vertex AI embeddings via .env.local
+# To skip: pytest -m 'not integration'
+
+# E2E tests (9 tests) - full HTTP workflow
 pytest tests/e2e/ -v
+# Tests: upload → query → delete with running server
+# Requires: server on localhost:8080
 
-# Integration tests
-python scripts/test_api.py
+# Run all tests
+pytest tests/ -v
+# 44 tests in ~50 seconds (integration + e2e slower)
 ```
+
+**Test architecture:**
+- **Unit:** Isolated logic testing with mocks (fast, no credentials)
+- **Integration:** Real cloud services (Vertex AI, requires .env.local)
+- **E2E:** Full stack testing (HTTP API, DB, GCS, Vertex AI)
+
+See `tests/README.md` for detailed test architecture and philosophy.
 
 ## Chunking Strategy
 
@@ -680,30 +769,53 @@ While `text-embedding-005` supports up to **20,000 tokens** (our chunks are ~500
 ```
 rag-lab/
 ├── src/
-│   ├── main.py                    # FastAPI app (upload + query + deduplication)
-│   ├── database.py                # PostgreSQL + pgvector (embeddings + metadata)
+│   ├── main.py                    # FastAPI app (17 formats, deduplication, CRUD)
+│   ├── database.py                # PostgreSQL + pgvector (768-dim embeddings)
 │   ├── storage.py                 # Cloud Storage (documents + text + chunks)
-│   ├── document_processor.py      # PDF/TXT → chunks → embeddings
+│   ├── document_processor.py      # Multi-format → YAML → chunks → embeddings
+│   ├── utils.py                   # SHA256 hashing, file operations
+│   ├── config.py                  # Configuration management
 │   └── __init__.py
 ├── deployment/
-│   ├── setup_infrastructure.py    # GCP resource provisioning (Python)
-│   ├── deploy_cloudrun.py         # Cloud Run deployment (Python)
-│   ├── local_run.py               # Local dev with Cloud SQL Proxy (Python)
-│   ├── teardown.py                # Infrastructure cleanup (Python)
-│   ├── .env.deploy.example        # Configuration template
-│   └── .gitignore                 # Ignore secrets
+│   ├── setup_infrastructure.py    # GCP resource provisioning
+│   ├── deploy_cloudrun.py         # Cloud Run deployment
+│   ├── local_run.py               # Local dev with Cloud SQL Proxy
+│   ├── teardown.py                # Infrastructure cleanup
+│   └── .env.deploy.example        # Deployment configuration
 ├── tests/
+│   ├── conftest.py                # Shared pytest configuration
+│   ├── README.md                  # Test architecture documentation
+│   ├── unit/                      # 30 tests (mocked, fast)
+│   │   ├── test_text_formats.py   # Format parsing (JSON→YAML, XML→YAML)
+│   │   ├── test_chunking.py       # Chunking logic
+│   │   ├── test_adaptive_chunking.py
+│   │   ├── test_fixture_extraction.py
+│   │   └── test_utils.py          # SHA256 hashing
+│   ├── integration/               # 5 tests (real Vertex AI)
+│   │   ├── conftest.py            # Real genai_client via .env.local
+│   │   ├── test_large_txt_processing.py
+│   │   └── test_chunking_integrity.py
+│   ├── e2e/                       # 9 tests (full HTTP workflow)
+│   │   └── test_full_rag_workflow.py
 │   └── fixtures/
-│       └── documents/             # 4 test documents (22.6KB)
+│       └── documents/             # 14 test files (TXT, PDF, MD, JSON, XML, CSV, YAML, LOG)
 │           ├── rag_architecture_guide.txt
-│           ├── gcp_services_overview.txt
-│           ├── fastapi_best_practices.txt
-│           ├── pgvector_complete_guide.txt
-│           └── README.md          # Test scenarios
+│           ├── google_agent_quality.pdf
+│           ├── sample_data.json   # → YAML conversion
+│           ├── sample_documentation.xml  # → YAML conversion
+│           ├── vector_databases.md
+│           ├── config.yaml
+│           ├── products.csv
+│           ├── server.log
+│           └── README.md
+├── .github/
+│   └── copilot-instructions.md    # AI assistant configuration
+├── pyproject.toml                 # pytest config, markers, filterwarnings
 ├── Dockerfile                     # Multi-stage production build
 ├── .gcloudignore                  # Cloud Run deployment filter
 ├── docker-compose.yaml            # Local development stack
 ├── requirements.txt               # Python dependencies
+├── .env.local                     # Local development config (gitignored)
 └── README.md                      # This file
 ```
 
@@ -753,28 +865,29 @@ cd deployment
 ## Features
 
 ✅ **Implemented:**
-- Document upload (PDF, TXT)
-- SHA256 deduplication (prevents duplicate processing)
-- Vector similarity search
-- Hybrid storage (PostgreSQL + GCS)
-- Local development with Cloud SQL Proxy
-- Automated GCP infrastructure setup
-- Cloud Run deployment scripts
-- Test fixtures for integration testing
-- Vertex AI embeddings: text-embedding-005 (768 dimensions)
+- **Multi-format upload:** 17 formats (PDF, TXT, MD, JSON, XML, CSV, YAML, code, logs)
+- **Structured data processing:** JSON/XML → YAML conversion preserves semantics
+- **SHA256 deduplication:** Content-based duplicate detection
+- **Vector similarity search:** PostgreSQL + pgvector (768-dim embeddings)
+- **Hybrid storage:** PostgreSQL (metadata + vectors) + GCS (files + text)
+- **CRUD operations:** Upload, list, query, delete (by ID or hash)
+- **Google Gen AI SDK:** text-embedding-005 embeddings (768 dimensions)
+- **Local development:** uvicorn hot reload + Cloud SQL Proxy
+- **Automated deployment:** GCP infrastructure setup + Cloud Run
+- **Comprehensive testing:** 44 tests (30 unit, 5 integration, 9 e2e)
+- **Test fixtures:** 14 documents covering all supported formats
 
 ## Roadmap
 
-- [ ] Document listing endpoint: `GET /v1/documents` (list all with metadata)
+- [x] ~~Document listing endpoint~~ - `GET /v1/documents` implemented
+- [x] ~~Document deletion endpoint~~ - `DELETE /v1/documents/{id}` and `DELETE /v1/documents/by-hash/{hash}` implemented
 - [ ] Document download endpoint: `GET /v1/documents/{uuid}/download` (GCS signed URL)
-- [ ] Document deletion endpoint: `DELETE /v1/documents/{uuid}` (GCS + DB cleanup)
 - [ ] Add Gemini integration for answer generation
 - [ ] Implement authentication (API keys, OAuth)
 - [ ] Add rate limiting (slowapi)
 - [ ] Enhanced monitoring and structured logging
-- [ ] Add support for DOCX, HTML, Markdown
+- [ ] Add support for DOCX, PPTX, EPUB
 - [ ] Create Kubernetes manifests for GKE
-- [ ] Comprehensive test suite (pytest)
 - [ ] Search result reranking
 - [ ] Redis caching for hot chunks (reduce GCS calls)
 - [ ] Metadata filtering in queries (by filename, date, type)
