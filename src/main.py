@@ -451,18 +451,53 @@ async def create_embedding(request: EmbeddingRequest):
 @app.post("/v1/query", response_model=QueryResponse)
 async def query_rag(request: QueryRequest):
     """
-    Query RAG system with two-level retrieval
+    Query RAG system with semantic search and relevance filtering
     
-    1. Generate query embedding
-    2. Search similar chunks (vector search)
-    3. Return chunks with references to original documents
+    **Two-level retrieval process:**
+    1. Generate query embedding using Vertex AI text-embedding-005
+    2. Vector search in PostgreSQL (cosine similarity)
+    3. Filter by similarity threshold (optional)
+    4. Fetch chunk texts from GCS (parallel)
+    5. Return ranked results with metadata
     
-    Example:
-        POST /v1/query
-        {
-            "query": "What is RAG?",
-            "top_k": 5
-        }
+    **Parameters:**
+    - `query` (str): Natural language query
+    - `top_k` (int): Maximum number of results (1-20, default: 5)
+    - `min_similarity` (float): Minimum similarity threshold 0.0-1.0 (default: 0.0)
+      - 0.0 = no filtering (returns all top_k results)
+      - 0.5 = moderate filter (good for production - filters irrelevant docs)
+      - 0.7 = strict filter (only highly relevant results)
+    
+    **Similarity threshold benefits:**
+    - Filters out irrelevant user documents in shared databases
+    - Prevents low-quality results from polluting responses
+    - "Better fewer good results than many bad ones"
+    - Useful for multi-tenant deployments
+    
+    **Example with filtering:**
+    ```json
+    {
+        "query": "Which smartphone has the best camera?",
+        "top_k": 5,
+        "min_similarity": 0.5
+    }
+    ```
+    
+    **Example without filtering:**
+    ```json
+    {
+        "query": "What is RAG?",
+        "top_k": 3
+    }
+    ```
+    
+    **Response includes:**
+    - `chunk_text`: Actual text content from document
+    - `similarity`: Cosine similarity score (0.0-1.0, higher = more relevant)
+    - `filename`: Original document name
+    - `chunk_index`: Position in document (0-based)
+    - `doc_uuid`: Globally unique document identifier
+    - `doc_metadata`: Custom metadata from upload
     """
     try:
         if genai_client is None:

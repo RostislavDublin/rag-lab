@@ -9,7 +9,7 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
 - **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
-- **Comprehensive testing**: 44 tests (30 unit, 5 integration, 9 e2e)
+- **Comprehensive testing**: 69 tests (49 unit, 20 e2e with semantic validation)
 
 ## Architecture
 
@@ -222,6 +222,15 @@ curl -X POST http://localhost:8080/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "query": "What is RAG?",
+    "top_k": 3,
+    "min_similarity": 0.5
+  }'
+
+# Without similarity threshold (returns all top_k results)
+curl -X POST http://localhost:8080/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is RAG?",
     "top_k": 3
   }'
 
@@ -233,29 +242,32 @@ curl -X POST http://localhost:8080/v1/embed \
 
 ### Test with Fixtures
 
-The repository includes 14 test documents for comprehensive format testing:
+The repository includes 10 test fixtures for comprehensive format testing:
 
-**Text documents (4):** RAG architecture guide, GCP services, FastAPI practices, pgvector guide  
-**Binary (2 PDFs):** Google Agent Quality, Context Engineering  
-**Structured data (4):** sample_data.json, sample_documentation.xml, config.yaml, products.csv  
-**Other formats (3):** vector_databases.md, bug_too_many.txt (large), server.log  
-**Test coverage:** PDF, TXT, MD, JSON (→YAML), XML (→YAML), CSV, YAML, LOG
+**E2E semantic tests (6):** electronics_catalog.json, art_exhibition.html, business_metrics.yaml, gdpr_compliance.xml, financial_quarterly_report.csv, rag_architecture_guide.txt  
+**Shared unit+e2e (2):** vector_databases.md, rag_system_operations.log  
+**Unit tests only (1):** bug_too_many.txt (large document for adaptive chunking)  
+**Binary (1):** google_agent_quality.pdf
+
+**Note:** Unit tests for JSON, HTML, XML, YAML, CSV use inline data (no fixture files needed)
+
+**Test coverage:** PDF, TXT, MD, JSON (→YAML), XML (→YAML), CSV, YAML, LOG, HTML (→Markdown)
 
 ```bash
 # Upload test documents
-for file in tests/fixtures/documents/*.txt; do
+for file in tests/fixtures/documents/*.{txt,json,html,yaml,xml,csv,log,md}; do
   curl -X POST http://localhost:8080/v1/documents/upload \
     -F "file=@$file"
 done
 
-# Test queries
+# Test queries with similarity threshold (filters irrelevant results)
 curl -X POST http://localhost:8080/v1/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "What is RAG?", "top_k": 5}'
+  -d '{"query": "Which smartphone has the best camera?", "top_k": 5, "min_similarity": 0.5}'
 
 curl -X POST http://localhost:8080/v1/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "How does HNSW indexing work?", "top_k": 5}'
+  -d '{"query": "What is RAG and how does it work?", "top_k": 5, "min_similarity": 0.5}'
 ```
 
 ## File Validation
@@ -394,29 +406,63 @@ curl -X POST http://localhost:8080/v1/documents/upload \
 
 ### `POST /v1/query`
 
-Query RAG system with natural language.
+Query RAG system with natural language and relevance filtering.
 
-**Request:**
+**Request parameters:**
+- `query` (string, required): Natural language query
+- `top_k` (int, optional): Maximum results to return (1-20, default: 5)
+- `min_similarity` (float, optional): Minimum similarity threshold 0.0-1.0 (default: 0.0)
+  - **0.0** = no filtering (returns all top_k results regardless of relevance)
+  - **0.5** = moderate filter (recommended for production - filters out irrelevant documents)
+  - **0.7** = strict filter (only highly relevant results)
+
+**Why use similarity threshold:**
+- Filters out irrelevant user documents in shared/multi-tenant databases
+- Prevents low-quality results from polluting responses
+- "Better fewer good results than many bad ones"
+- Makes tests resilient to unrelated documents in production DB
+
+**Request with filtering (recommended):**
+```bash
+curl -X POST http://localhost:8080/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Which smartphone has the best camera?",
+    "top_k": 5,
+    "min_similarity": 0.5
+  }'
+```
+
+**Request without filtering:**
 ```bash
 curl -X POST http://localhost:8080/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "query": "What is RAG?",
-    "top_k": 5
+    "top_k": 3
   }'
 ```
 
 **Response:**
 ```json
 {
-  "query": "What is RAG?",
-  "total": 3,
+  "query": "Which smartphone has the best camera?",
+  "total": 2,
   "results": [
     {
-      "chunk_text": "RAG (Retrieval Augmented Generation) is...",
-      "similarity": 0.89,
+      "chunk_text": "Samsung Galaxy Pro Max features a 200MP main camera...",
+      "similarity": 0.87,
       "chunk_index": 5,
-      "filename": "paper.pdf",
+      "filename": "electronics_catalog.json",
+      "original_doc_id": 1,
+      "doc_uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "doc_metadata": {}
+    },
+    {
+      "chunk_text": "iPhone 16 Pro camera system includes 48MP main sensor...",
+      "similarity": 0.82,
+      "chunk_index": 3,
+      "filename": "electronics_catalog.json",
       "original_doc_id": 1,
       "doc_uuid": "550e8400-e29b-41d4-a716-446655440000",
       "doc_metadata": {}
@@ -425,13 +471,16 @@ curl -X POST http://localhost:8080/v1/query \
 }
 ```
 
+**Note:** If `min_similarity=0.5` is set, results with similarity < 0.5 are filtered out. This means `total` may be less than `top_k` if no highly relevant documents exist.
+
 **What happens:**
-1. Generate query embedding (Vertex AI)
-2. Vector search in PostgreSQL (cosine similarity)
-3. Group results by doc_uuid for efficient GCS fetching
-4. Fetch chunk texts from GCS in parallel
-5. Merge texts with search results
-6. Return formatted response with full chunk context
+1. Generate query embedding (Vertex AI text-embedding-005, 768 dimensions)
+2. Vector search in PostgreSQL with cosine similarity
+3. **Filter by similarity threshold** if `min_similarity` provided (WHERE clause in SQL)
+4. Group results by doc_uuid for efficient GCS fetching
+5. Fetch chunk texts from GCS in parallel (async for performance)
+6. Merge texts with search results
+7. Return formatted response with similarity scores and full chunk context
 
 ### `POST /v1/embed`
 
