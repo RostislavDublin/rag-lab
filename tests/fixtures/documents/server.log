@@ -1,0 +1,23 @@
+2025-12-11 10:00:15 INFO [server] Starting RAG Lab API server on port 8080
+2025-12-11 10:00:15 INFO [database] Connecting to PostgreSQL database
+2025-12-11 10:00:16 INFO [database] Connection pool initialized (min=5, max=20)
+2025-12-11 10:00:16 INFO [vertexai] Initializing Vertex AI (project=myai-475419, region=us-central1)
+2025-12-11 10:00:17 INFO [vertexai] Loaded text-embedding-005 model (768 dimensions)
+2025-12-11 10:00:17 INFO [gcs] Connected to GCS bucket: myai-475419-rag-documents
+2025-12-11 10:00:17 INFO [server] Health check endpoint ready at /health
+2025-12-11 10:00:17 INFO [server] API documentation available at /docs
+2025-12-11 10:00:17 INFO [server] Server started successfully
+2025-12-11 10:05:32 INFO [api] POST /v1/documents/upload - file: research_paper.pdf (2.3 MB)
+2025-12-11 10:05:35 INFO [processor] Extracted 15,847 characters from PDF
+2025-12-11 10:05:35 INFO [processor] Created 8 chunks (chunk_size=2000, overlap=200)
+2025-12-11 10:05:36 INFO [embeddings] Generated 8 embeddings in 1.2s (parallel processing)
+2025-12-11 10:05:36 INFO [database] Stored 8 chunks with embeddings
+2025-12-11 10:05:36 INFO [gcs] Uploaded original file to GCS
+2025-12-11 10:05:36 INFO [api] Upload complete - doc_id=42, chunks=8
+2025-12-11 10:08:15 INFO [api] POST /v1/query - query: "What is RAG?"
+2025-12-11 10:08:16 INFO [search] Vector search found 5 relevant chunks (similarity > 0.7)
+2025-12-11 10:08:16 INFO [api] Query complete - returned 5 results
+2025-12-11 10:12:00 WARN [database] Connection pool 80% utilized (16/20 connections)
+2025-12-11 10:12:00 INFO [database] Auto-scaling connection pool to max capacity
+2025-12-11 10:15:30 ERROR [api] POST /v1/documents/upload - file too large (55 MB > 50 MB limit)
+2025-12-11 10:15:30 INFO [api] Request rejected with HTTP 413
