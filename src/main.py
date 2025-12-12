@@ -38,7 +38,7 @@ else:
     print("WARNING: No .env.local or .env file found - using system environment variables only")
 
 import vertexai
-from fastapi import FastAPI, HTTPException, UploadFile, File, status
+from fastapi import FastAPI, HTTPException, UploadFile, File, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -48,6 +48,7 @@ from google.genai.types import EmbedContentConfig, HttpOptions
 # Import utilities
 from .utils import calculate_file_hash
 from .file_validator import FileValidator
+from .auth import get_current_user, security  # Authentication
 
 from .database import vector_db
 from .document_processor import DocumentProcessor, EmbeddingProvider
@@ -108,10 +109,44 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 app = FastAPI(
     title="RAG Lab API",
-    description="Production RAG-as-a-Service with Vertex AI",
+    description="Production RAG-as-a-Service with Vertex AI + JWT Authentication",
     version=APP_VERSION,
     lifespan=lifespan,
+    swagger_ui_parameters={
+        "persistAuthorization": True,  # Keep auth token between page refreshes
+    },
 )
+
+# Configure OpenAPI security scheme for Swagger UI
+app.openapi_schema = None  # Reset to regenerate with security
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    from fastapi.openapi.utils import get_openapi
+    
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    
+    # Add security scheme
+    openapi_schema["components"]["securitySchemes"] = {
+        "HTTPBearer": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Google ID Token (OAuth2). Get from: gcloud auth print-identity-token"
+        }
+    }
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 # CORS middleware for frontend integration
 app.add_middleware(
@@ -247,15 +282,21 @@ async def health():
 
 
 @app.post("/v1/documents/upload", response_model=DocumentUploadResponse)
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    user_email: str = Depends(get_current_user)  # JWT authentication required
+):
     """
-    Upload and process document (PDF or TXT)
+    Upload and process document (PDF or TXT) - REQUIRES AUTHENTICATION
+    
+    **Authentication:** Requires valid Google ID token in Authorization header.
     
     - Stores original file
     - Extracts text
     - Chunks content
     - Generates embeddings
     - Stores in two-level architecture (original + chunks)
+    - Records uploader metadata (user_email, timestamp)
     
     Supported formats:
     - PDF: .pdf
@@ -345,14 +386,20 @@ async def upload_document(file: UploadFile = File(...)):
             embeddings_only.append(embedding)
         
         # Create DB record (generates UUID) - AFTER validation
+        # Store uploader metadata for multi-tenancy and audit trail
         doc_id, doc_uuid = await vector_db.insert_original_document(
             filename=file.filename,
             file_type=content_type,
             file_size=len(file_content),
             file_hash=file_hash,
-            metadata={"original_filename": file.filename}
+            metadata={
+                "original_filename": file.filename,
+                "uploaded_by": user_email,
+                "uploaded_at": datetime.utcnow().isoformat(),
+                "uploaded_via": "api",
+            }
         )
-        print(f"Created document record: ID={doc_id}, UUID={doc_uuid}")
+        print(f"Created document record: ID={doc_id}, UUID={doc_uuid}, user={user_email}")
         
         try:
             # Upload all files to GCS (parallel)
@@ -449,9 +496,14 @@ async def create_embedding(request: EmbeddingRequest):
 
 
 @app.post("/v1/query", response_model=QueryResponse)
-async def query_rag(request: QueryRequest):
+async def query_rag(
+    request: QueryRequest,
+    user_email: str = Depends(get_current_user)  # JWT authentication required
+):
     """
-    Query RAG system with semantic search and relevance filtering
+    Query RAG system with semantic search and relevance filtering - REQUIRES AUTHENTICATION
+    
+    **Authentication:** Requires valid Google ID token in Authorization header.
     
     **Two-level retrieval process:**
     1. Generate query embedding using Vertex AI text-embedding-005

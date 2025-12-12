@@ -32,14 +32,14 @@ API_BASE = "http://localhost:8080"
 
 
 @pytest.fixture
-def fresh_document():
+def fresh_document(auth_headers):
     """Upload a fresh document and return its ID"""
     fixtures_dir = Path(__file__).parent.parent / "fixtures" / "documents"
     pdf_path = fixtures_dir / "google_agent_quality.pdf"
     
     with open(pdf_path, "rb") as f:
         files = {"file": (pdf_path.name, f, "application/pdf")}
-        resp = requests.post(f"{API_BASE}/v1/documents/upload", files=files)
+        resp = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers)
         assert resp.status_code == 200, f"Upload failed: {resp.status_code}"
         
         data = resp.json()

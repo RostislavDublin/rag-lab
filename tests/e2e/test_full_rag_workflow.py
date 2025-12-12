@@ -138,7 +138,7 @@ def test_01_verify_api_health():
     print(f"✓ API responsive, current documents: {docs['total']}")
 
 
-def test_02_upload_txt_document(test_documents):
+def test_02_upload_txt_document(test_documents, auth_headers):
     """Step 2: Upload RAG architecture guide (test RAG technology search)"""
     print("\n=== Step 2: Upload RAG architecture guide (TXT) ===")
     
@@ -147,7 +147,7 @@ def test_02_upload_txt_document(test_documents):
     
     with open(txt_path, "rb") as f:
         files = {"file": (txt_path.name, f, "text/plain")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -158,8 +158,8 @@ def test_02_upload_txt_document(test_documents):
     print(f"  - Chunks: {result['chunks_created']}")
 
 
-def test_03_upload_pdf_document(test_documents):
-    """Step 3: Upload AI agent quality guide (test software engineering search)"""
+def test_03_upload_pdf_document(test_documents, auth_headers):
+    """Step 3: Upload AI agent quality guide (test AI/PDF processing)"""
     print("\n=== Step 3: Upload AI agent quality guide (PDF) ===")
     
     pdf_path = test_documents["pdf"]
@@ -167,7 +167,7 @@ def test_03_upload_pdf_document(test_documents):
     
     with open(pdf_path, "rb") as f:
         files = {"file": (pdf_path.name, f, "application/pdf")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -178,8 +178,8 @@ def test_03_upload_pdf_document(test_documents):
     print(f"  - Chunks: {result['chunks_created']}")
 
 
-def test_03b_upload_markdown_document(test_documents):
-    """Step 3b: Upload vector databases guide (test database search)"""
+def test_03b_upload_markdown_document(test_documents, auth_headers):
+    """Step 3b: Upload vector databases guide (test Markdown processing)"""
     print("\n=== Step 3b: Upload vector databases guide (Markdown) ===")
     
     md_path = test_documents["md"]
@@ -187,7 +187,7 @@ def test_03b_upload_markdown_document(test_documents):
     
     with open(md_path, "rb") as f:
         files = {"file": (md_path.name, f, "text/markdown")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -198,8 +198,8 @@ def test_03b_upload_markdown_document(test_documents):
     print(f"  - Chunks: {result['chunks_created']}")
 
 
-def test_03c_upload_json_document(test_documents):
-    """Step 3c: Upload electronics catalog (test product/price search)"""
+def test_03c_upload_json_document(test_documents, auth_headers):
+    """Step 3c: Upload electronics catalog (test JSON → YAML conversion)"""
     print("\n=== Step 3c: Upload electronics catalog (JSON → YAML) ===")
     
     json_path = test_documents["json"]
@@ -207,7 +207,7 @@ def test_03c_upload_json_document(test_documents):
     
     with open(json_path, "rb") as f:
         files = {"file": (json_path.name, f, "application/json")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -219,8 +219,8 @@ def test_03c_upload_json_document(test_documents):
     print("  - Note: JSON converted to YAML for semantic preservation")
 
 
-def test_03d_upload_html_document(test_documents):
-    """Step 3d: Upload art exhibition info (test art/event search)"""
+def test_03d_upload_html_document(test_documents, auth_headers):
+    """Step 3d: Upload art exhibition info (test HTML → Markdown conversion)"""
     print("\n=== Step 3d: Upload art exhibition info (HTML → Markdown) ===")
     
     html_path = test_documents["html"]
@@ -228,7 +228,7 @@ def test_03d_upload_html_document(test_documents):
     
     with open(html_path, "rb") as f:
         files = {"file": (html_path.name, f, "text/html")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -240,8 +240,8 @@ def test_03d_upload_html_document(test_documents):
     print("  - Note: HTML converted to Markdown (preserves structure)")
 
 
-def test_03e_upload_yaml_document(test_documents):
-    """Step 3e: Upload business metrics (test KPI/financial search)"""
+def test_03e_upload_yaml_document(test_documents, auth_headers):
+    """Step 3e: Upload business metrics (test YAML processing)"""
     print("\n=== Step 3e: Upload business metrics (YAML) ===")
     
     yaml_path = test_documents["yaml"]
@@ -249,7 +249,7 @@ def test_03e_upload_yaml_document(test_documents):
     
     with open(yaml_path, "rb") as f:
         files = {"file": (yaml_path.name, f, "application/x-yaml")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -261,8 +261,8 @@ def test_03e_upload_yaml_document(test_documents):
     print("  - Note: YAML kept as-is (already optimal for LLM)")
 
 
-def test_03f_upload_xml_document(test_documents):
-    """Step 3f: Upload GDPR compliance report (test legal/compliance search)"""
+def test_03f_upload_xml_document(test_documents, auth_headers):
+    """Step 3f: Upload GDPR compliance report (test XML → YAML conversion)"""
     print("\n=== Step 3f: Upload GDPR compliance report (XML → YAML) ===")
     
     xml_path = test_documents["xml"]
@@ -270,7 +270,7 @@ def test_03f_upload_xml_document(test_documents):
     
     with open(xml_path, "rb") as f:
         files = {"file": (xml_path.name, f, "application/xml")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -282,8 +282,8 @@ def test_03f_upload_xml_document(test_documents):
     print("  - Note: XML converted to YAML (preserves semantic structure)")
 
 
-def test_03g_upload_csv_document(test_documents):
-    """Step 3g: Upload financial quarterly report (test revenue/growth search)"""
+def test_03g_upload_csv_document(test_documents, auth_headers):
+    """Step 3g: Upload financial quarterly report (test CSV processing)"""
     print("\n=== Step 3g: Upload financial quarterly report (CSV) ===")
     
     csv_path = test_documents["csv"]
@@ -291,7 +291,7 @@ def test_03g_upload_csv_document(test_documents):
     
     with open(csv_path, "rb") as f:
         files = {"file": (csv_path.name, f, "text/csv")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -303,8 +303,8 @@ def test_03g_upload_csv_document(test_documents):
     print("  - Note: CSV kept as plain text (tabular structure preserved)")
 
 
-def test_03h_upload_log_document(test_documents):
-    """Step 3h: Upload system operations log (test debugging/ops search)"""
+def test_03h_upload_log_document(test_documents, auth_headers):
+    """Step 3h: Upload system operations log (test LOG file processing)"""
     print("\n=== Step 3h: Upload system operations log (LOG) ===")
     
     log_path = test_documents["log"]
@@ -312,7 +312,7 @@ def test_03h_upload_log_document(test_documents):
     
     with open(log_path, "rb") as f:
         files = {"file": (log_path.name, f, "text/plain")}
-        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, headers=auth_headers, timeout=60)
     
     assert response.status_code == 200, f"Upload failed: {response.text}"
     result = response.json()
@@ -339,7 +339,7 @@ def test_04_list_documents():
         print(f"  - [{doc['doc_id']}] {doc['filename']} ({doc['chunk_count']} chunks)")
 
 
-def test_05a_semantic_search_products():
+def test_05a_semantic_search_products(auth_headers):
     """Step 5a: Semantic search - product queries should retrieve electronics catalog"""
     print("\n=== Step 5a: Semantic search - Product specifications ===")
     
@@ -347,6 +347,7 @@ def test_05a_semantic_search_products():
     response = requests.post(
         f"{API_BASE}/v1/query",
         json={"query": query, "top_k": 5, "min_similarity": 0.5},
+        headers=auth_headers,
         timeout=30
     )
     
@@ -372,7 +373,7 @@ def test_05a_semantic_search_products():
     print(f"  Semantic validation: PASSED (electronics catalog retrieved)")
 
 
-def test_05b_semantic_search_art():
+def test_05b_semantic_search_art(auth_headers):
     """Step 5b: Semantic search - art queries should retrieve exhibition info"""
     print("\n=== Step 5b: Semantic search - Art exhibitions ===")
     
@@ -380,6 +381,7 @@ def test_05b_semantic_search_art():
     response = requests.post(
         f"{API_BASE}/v1/query",
         json={"query": query, "top_k": 5, "min_similarity": 0.5},
+        headers=auth_headers,
         timeout=30
     )
     
@@ -404,14 +406,15 @@ def test_05b_semantic_search_art():
     print(f"  Semantic validation: PASSED (art exhibition retrieved)")
 
 
-def test_05c_semantic_search_business():
+def test_05c_semantic_search_business(auth_headers):
     """Step 5c: Semantic search - business queries should retrieve metrics"""
     print("\n=== Step 5c: Semantic search - Business metrics ===")
     
-    query = "What is our customer acquisition cost and lifetime value ratio?"
+    query = "What is the customer satisfaction rating and which region has the highest sales growth?"
     response = requests.post(
         f"{API_BASE}/v1/query",
         json={"query": query, "top_k": 5, "min_similarity": 0.5},
+        headers=auth_headers,
         timeout=30
     )
     
@@ -436,7 +439,7 @@ def test_05c_semantic_search_business():
     print(f"  Semantic validation: PASSED (business metrics retrieved)")
 
 
-def test_05d_semantic_search_compliance():
+def test_05d_semantic_search_compliance(auth_headers):
     """Step 5d: Semantic search - legal queries should retrieve GDPR report"""
     print("\n=== Step 5d: Semantic search - Legal compliance ===")
     
@@ -444,6 +447,7 @@ def test_05d_semantic_search_compliance():
     response = requests.post(
         f"{API_BASE}/v1/query",
         json={"query": query, "top_k": 5, "min_similarity": 0.5},
+        headers=auth_headers,
         timeout=30
     )
     
@@ -468,7 +472,7 @@ def test_05d_semantic_search_compliance():
     print(f"  Semantic validation: PASSED (GDPR report retrieved)")
 
 
-def test_05e_semantic_search_financials():
+def test_05e_semantic_search_financials(auth_headers):
     """Step 5e: Semantic search - financial queries should retrieve quarterly report"""
     print("\n=== Step 5e: Semantic search - Financial data ===")
     
@@ -476,6 +480,7 @@ def test_05e_semantic_search_financials():
     response = requests.post(
         f"{API_BASE}/v1/query",
         json={"query": query, "top_k": 5, "min_similarity": 0.5},
+        headers=auth_headers,
         timeout=30
     )
     
@@ -500,7 +505,7 @@ def test_05e_semantic_search_financials():
     print(f"  Semantic validation: PASSED (financial report retrieved)")
 
 
-def test_05f_semantic_search_operations():
+def test_05f_semantic_search_operations(auth_headers):
     """Step 5f: Semantic search - ops queries should retrieve system logs"""
     print("\n=== Step 5f: Semantic search - System operations ===")
     
@@ -508,6 +513,7 @@ def test_05f_semantic_search_operations():
     response = requests.post(
         f"{API_BASE}/v1/query",
         json={"query": query, "top_k": 5, "min_similarity": 0.5},
+        headers=auth_headers,
         timeout=30
     )
     
@@ -532,7 +538,7 @@ def test_05f_semantic_search_operations():
     print(f"  Semantic validation: PASSED (operations log retrieved)")
 
 
-def test_05g_semantic_isolation_negative():
+def test_05g_semantic_isolation_negative(auth_headers):
     """Step 5g: Negative test - topic isolation (camera query should NOT return art/business docs)"""
     print("\n=== Step 5g: Semantic isolation test ===")
     
@@ -540,6 +546,7 @@ def test_05g_semantic_isolation_negative():
     response = requests.post(
         f"{API_BASE}/v1/query",
         json={"query": query, "top_k": 10, "min_similarity": 0.5},
+        headers=auth_headers,
         timeout=30
     )
     

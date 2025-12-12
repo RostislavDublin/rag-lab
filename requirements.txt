@@ -30,6 +30,11 @@ psycopg2-binary>=2.9.9
 pgvector>=0.2.3
 asyncpg>=0.29.0  # Async PostgreSQL driver for FastAPI
 
+# Authentication (JWT tokens, Google Identity Platform)
+PyJWT>=2.8.0
+cryptography>=41.0.0  # Required for JWT RS256 algorithm
+google-auth>=2.23.0  # Google token verification
+
 # Document processing
 pymupdf>=1.23.0  # PDF text extraction
 pymupdf4llm>=0.2.7  # LLM-optimized PDF extraction
