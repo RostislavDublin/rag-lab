@@ -69,25 +69,38 @@ pytest tests/integration/test_large_txt_processing.py -v
 
 ### E2E Tests (`tests/e2e/`)
 
-**Purpose:** Test complete user workflows through HTTP API
+**Purpose:** Test complete user workflows through HTTP API with semantic search validation
 
 **Characteristics:**
 - ✅ Full stack: FastAPI server + Vertex AI + Database + GCS
 - ✅ HTTP requests (not direct Python calls)
+- ✅ Semantic search quality validation (not just upload/download)
 - ✅ Slowest execution (can take minutes)
 - ✅ Require running server + all credentials
 
 **Coverage:**
-- Document upload (TXT, PDF, JSON, Markdown)
-- Semantic search
+- Document upload (9 formats: TXT, PDF, MD, JSON, HTML, YAML, XML, CSV, LOG)
+- **Semantic search validation** - thematic documents test RAG understanding
+  - Products/prices queries → Electronics catalog
+  - Art/exhibitions queries → Art exhibition info
+  - Business/KPIs queries → Business metrics
+  - Legal/compliance queries → GDPR compliance report
+  - Financial queries → Quarterly financial report
+  - Operations/debugging queries → System operation logs
+  - Topic isolation (negative test: camera query shouldn't return art docs)
 - Document download
 - Document deletion
-- Multi-format support
+- GCS storage verification
+
+**Philosophy:**
+- **Non-trivial queries** - test semantic understanding vs keyword matching
+- **Thematic documents** - each format has distinct topic for isolation testing
+- **Real-world validation** - verify RAG actually works as intended and provides value
 
 **Requirements:**
 - Server running on `http://localhost:8080`
 - All GCP services configured
-- Test documents not left in system (auto-cleanup)
+- Test documents auto-cleanup (unless `--no-cleanup`)
 
 **Run:**
 ```bash
@@ -157,10 +170,23 @@ pytest tests/integration/ tests/e2e/ -v
 
 ## Current Test Coverage
 
-- **44 total tests**
-  - 30 unit tests (format support, chunking, extraction)
-  - 5 integration tests (real Vertex AI, large files)
-  - 9 e2e tests (full HTTP workflows)
+- **74 total tests** (as of 2025-11-22)
+  - 36 unit tests (format support, chunking, extraction, utilities)
+  - 18 integration tests (real Vertex AI, large files, chunking integrity)
+  - **20 e2e tests** (full HTTP workflows + **7 semantic search validation tests**)
+    - 9 upload tests (one per format: TXT, PDF, MD, JSON, HTML, YAML, XML, CSV, LOG)
+    - **7 semantic tests** (products, art, business, compliance, financials, operations, isolation)
+    - 1 health check
+    - 1 list documents
+    - 1 download test
+    - 1 GCS verification
+
+**Semantic Search Validation (NEW):**
+E2E tests now include comprehensive semantic search quality validation:
+- Thematic documents: Each format covers distinct topic (IT, business, art, legal, etc.)
+- Non-trivial queries: Test understanding vs keyword matching (e.g., "Which smartphone has best camera?" not just "camera")
+- Topical isolation: Verify RAG returns semantically correct documents, not just any match
+- Real-world value: Ensures RAG actually works as intended
 
 ## Key Fixtures
 

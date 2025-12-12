@@ -1,0 +1,54 @@
+2025-12-11 08:15:23 INFO [System] RAG API server starting on port 8080
+2025-12-11 08:15:24 INFO [Database] PostgreSQL connection pool initialized (min=2, max=10)
+2025-12-11 08:15:24 INFO [Database] pgvector extension verified (version 0.5.1)
+2025-12-11 08:15:25 INFO [Storage] GCS bucket connected: raglab-documents (region: us-central1)
+2025-12-11 08:15:25 INFO [AI] Vertex AI client initialized (project: myai-475419, region: us-central1)
+2025-12-11 08:15:25 INFO [AI] Embedding model: text-embedding-005 (dimensions: 768)
+2025-12-11 08:15:26 INFO [System] FastAPI application ready, listening on http://0.0.0.0:8080
+2025-12-11 08:15:26 INFO [System] Health check endpoint: GET /health
+2025-12-11 08:17:42 INFO [Upload] Document upload started: technical_spec_v2.pdf (2.4MB)
+2025-12-11 08:17:43 INFO [Processing] PDF extraction using pymupdf4llm (LLM-optimized)
+2025-12-11 08:17:45 INFO [Processing] Extracted 8542 characters from PDF
+2025-12-11 08:17:45 INFO [Processing] Chunking text (chunk_size=2000, overlap=200)
+2025-12-11 08:17:45 INFO [Processing] Created 6 chunks from document
+2025-12-11 08:17:45 INFO [AI] Generating embeddings for 6 chunks via Vertex AI
+2025-12-11 08:17:47 INFO [AI] Embeddings generated successfully (batch_size=6, latency=1.8s)
+2025-12-11 08:17:47 INFO [Database] Storing document metadata (doc_uuid=a3f8c2e1-9b4d-4a7e-8c3f-1d5e6b7a8c9d)
+2025-12-11 08:17:47 INFO [Database] Storing 6 chunks with vector embeddings
+2025-12-11 08:17:48 INFO [Storage] Uploading original file to GCS: a3f8c2e1-9b4d-4a7e-8c3f-1d5e6b7a8c9d/document.pdf
+2025-12-11 08:17:49 INFO [Storage] Uploading extracted text to GCS: a3f8c2e1-9b4d-4a7e-8c3f-1d5e6b7a8c9d/extracted_text.txt
+2025-12-11 08:17:49 INFO [Storage] Uploading 6 chunk files to GCS
+2025-12-11 08:17:50 INFO [Upload] Document processed successfully (doc_id=127, chunks=6, duration=8.2s)
+2025-12-11 08:23:15 INFO [Query] Search query received: "What are the performance benchmarks?"
+2025-12-11 08:23:15 INFO [AI] Generating query embedding via Vertex AI
+2025-12-11 08:23:16 INFO [Database] Vector similarity search (top_k=5, threshold=0.7)
+2025-12-11 08:23:16 INFO [Database] Found 5 relevant chunks (similarity scores: 0.89, 0.85, 0.82, 0.78, 0.74)
+2025-12-11 08:23:16 INFO [Storage] Retrieving chunk content from GCS (5 chunks)
+2025-12-11 08:23:17 INFO [Query] Search completed successfully (results=5, duration=2.1s)
+2025-12-11 08:28:33 WARNING [Database] Connection pool utilization high (9/10 connections active)
+2025-12-11 08:28:33 INFO [Database] Connection pool auto-scaling triggered (new max=15)
+2025-12-11 08:35:47 INFO [Upload] Document upload started: user_manual.txt (156KB)
+2025-12-11 08:35:47 INFO [Processing] Text extraction (UTF-8 encoding detected)
+2025-12-11 08:35:47 INFO [Processing] Extracted 45230 characters from TXT
+2025-12-11 08:35:47 INFO [Processing] Chunking text (chunk_size=2000, overlap=200)
+2025-12-11 08:35:47 INFO [Processing] Created 28 chunks from document
+2025-12-11 08:35:48 INFO [AI] Generating embeddings for 28 chunks via Vertex AI
+2025-12-11 08:35:50 INFO [AI] Embeddings generated successfully (batch_size=28, latency=2.4s)
+2025-12-11 08:35:51 ERROR [Database] Unique constraint violation: document hash already exists (hash=5f4dcc3b5aa765d61d8327deb882cf99)
+2025-12-11 08:35:51 INFO [Upload] Duplicate document detected: user_manual.txt (existing_doc_id=89)
+2025-12-11 08:35:51 INFO [Upload] Upload rejected (reason=duplicate, duration=4.1s)
+2025-12-11 08:42:18 INFO [Delete] Document deletion requested (doc_id=115)
+2025-12-11 08:42:18 INFO [Database] Deleting document chunks from database (doc_id=115, chunk_count=12)
+2025-12-11 08:42:19 INFO [Storage] Deleting document files from GCS (doc_uuid=7b3e9c4f-2a5d-4e8b-9c1f-3d6e7a8b9c0e)
+2025-12-11 08:42:20 INFO [Storage] Deleted 12 chunk files + original file + extracted text
+2025-12-11 08:42:20 INFO [Database] Deleting document metadata (doc_id=115)
+2025-12-11 08:42:20 INFO [Delete] Document deleted successfully (doc_id=115, duration=2.1s)
+2025-12-11 08:48:55 ERROR [AI] Vertex AI API error: quota exceeded (requests_per_minute=60, limit=60)
+2025-12-11 08:48:55 WARNING [AI] Retrying embedding generation with exponential backoff (attempt 1/3, delay=2s)
+2025-12-11 08:48:57 INFO [AI] Retry successful (attempt=1, latency=1.9s)
+2025-12-11 08:52:10 INFO [System] Health check requested
+2025-12-11 08:52:10 INFO [System] Database pool healthy (active=3/15, idle=12/15)
+2025-12-11 08:52:10 INFO [System] GCS connection healthy (last_check=2s ago)
+2025-12-11 08:52:10 INFO [System] Vertex AI connection healthy (last_successful_request=183s ago)
+2025-12-11 08:52:10 INFO [System] Memory usage: 1.2GB/4GB (30%), CPU: 12%
+2025-12-11 08:52:10 INFO [System] Uptime: 2h 36m 47s

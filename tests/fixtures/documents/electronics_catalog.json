@@ -1,0 +1,106 @@
+{
+  "catalog_name": "Premium Electronics Store 2025",
+  "category": "Smartphones",
+  "description": "High-end smartphone inventory with detailed specifications and pricing",
+  "products": [
+    {
+      "product_id": "PHONE-001",
+      "model": "Galaxy Pro Max",
+      "manufacturer": "Samsung",
+      "price_usd": 1299.99,
+      "specifications": {
+        "display_size": "6.8 inches",
+        "display_type": "Dynamic AMOLED 2X",
+        "refresh_rate_hz": 120,
+        "processor": "Snapdragon 8 Gen 3",
+        "ram_gb": 12,
+        "storage_gb": 512,
+        "main_camera_mp": 200,
+        "battery_capacity_mah": 5000,
+        "charging_speed_w": 45
+      },
+      "features": [
+        "5G connectivity worldwide",
+        "Wireless charging 15W",
+        "Water resistant IP68 certified",
+        "Advanced night mode photography",
+        "S-Pen stylus support"
+      ],
+      "availability": {
+        "in_stock": true,
+        "quantity": 45,
+        "warehouse": "US-West",
+        "shipping_days": 2
+      },
+      "warranty_months": 24,
+      "rating": 4.7
+    },
+    {
+      "product_id": "PHONE-002",
+      "model": "iPhone 16 Pro",
+      "manufacturer": "Apple",
+      "price_usd": 1399.99,
+      "specifications": {
+        "display_size": "6.7 inches",
+        "display_type": "Super Retina XDR OLED",
+        "refresh_rate_hz": 120,
+        "processor": "A18 Bionic chip",
+        "ram_gb": 8,
+        "storage_gb": 256,
+        "main_camera_mp": 48,
+        "battery_capacity_mah": 4500,
+        "charging_speed_w": 27
+      },
+      "features": [
+        "Face ID facial recognition",
+        "MagSafe magnetic charging",
+        "Ceramic Shield display protection",
+        "ProRAW and ProRes video",
+        "Action button customization"
+      ],
+      "availability": {
+        "in_stock": true,
+        "quantity": 32,
+        "warehouse": "US-East",
+        "shipping_days": 1
+      },
+      "warranty_months": 12,
+      "rating": 4.8
+    },
+    {
+      "product_id": "PHONE-003",
+      "model": "Pixel 9 Ultra",
+      "manufacturer": "Google",
+      "price_usd": 999.99,
+      "specifications": {
+        "display_size": "6.5 inches",
+        "display_type": "LTPO OLED",
+        "refresh_rate_hz": 120,
+        "processor": "Google Tensor G4",
+        "ram_gb": 12,
+        "storage_gb": 256,
+        "main_camera_mp": 50,
+        "battery_capacity_mah": 4800,
+        "charging_speed_w": 30
+      },
+      "features": [
+        "AI-powered photo enhancement",
+        "Magic Eraser for object removal",
+        "Real Tone skin representation",
+        "Live Translate in 50+ languages",
+        "Stock Android experience"
+      ],
+      "availability": {
+        "in_stock": true,
+        "quantity": 28,
+        "warehouse": "US-Central",
+        "shipping_days": 3
+      },
+      "warranty_months": 24,
+      "rating": 4.6
+    }
+  ],
+  "last_updated": "2025-12-11T10:30:00Z",
+  "currency": "USD",
+  "tax_included": false
+}

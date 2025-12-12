@@ -1,0 +1,106 @@
+company: TechStartup Inc
+business_model: B2B SaaS
+fiscal_year: 2025
+
+revenue_targets:
+  q1_target_usd: 2500000
+  q2_target_usd: 3200000
+  q3_target_usd: 3800000
+  q4_target_usd: 4500000
+  annual_target_usd: 14000000
+
+key_metrics:
+  monthly_recurring_revenue:
+    january: 720000
+    february: 785000
+    march: 850000
+    target_december: 1200000
+  
+  customer_acquisition:
+    cost_per_acquisition_usd: 4500
+    target_cac_usd: 3800
+    customer_lifetime_value_usd: 45000
+    ltv_to_cac_ratio: 10.0
+    churn_rate_percent: 3.2
+    target_churn_percent: 2.5
+  
+  growth_metrics:
+    year_over_year_growth_percent: 145
+    month_over_month_growth_percent: 12
+    net_revenue_retention_percent: 118
+    gross_margin_percent: 78
+
+departments:
+  engineering:
+    headcount: 45
+    budget_usd: 6500000
+    priorities:
+      - Platform scalability improvements
+      - AI feature development
+      - API performance optimization
+    key_technologies:
+      - Python
+      - PostgreSQL
+      - Kubernetes
+      - Vertex AI
+  
+  sales:
+    headcount: 28
+    budget_usd: 3200000
+    priorities:
+      - Enterprise customer acquisition
+      - Partner channel development
+      - Customer success program
+    quota_per_rep_usd: 800000
+    average_deal_size_usd: 45000
+  
+  marketing:
+    headcount: 15
+    budget_usd: 2100000
+    priorities:
+      - Content marketing expansion
+      - SEO optimization
+      - Conference participation
+    marketing_qualified_leads_monthly: 450
+    lead_to_customer_conversion_percent: 8.5
+
+product_strategy:
+  core_features:
+    - Real-time data analytics
+    - Machine learning insights
+    - API integrations
+    - Custom reporting
+  
+  roadmap_q1_2025:
+    - Advanced AI recommendations
+    - Multi-tenant architecture
+    - Mobile application beta
+  
+  competitive_advantages:
+    - Superior AI accuracy (92% vs industry 78%)
+    - Faster implementation (2 weeks vs 8 weeks)
+    - Lower total cost of ownership (40% reduction)
+
+financial_health:
+  cash_reserves_usd: 8500000
+  burn_rate_monthly_usd: 650000
+  runway_months: 13
+  funding_round: Series B
+  investors:
+    - Sequoia Capital
+    - Andreessen Horowitz
+    - Y Combinator
+
+risk_factors:
+  - Increased competition from larger vendors
+  - Economic downturn affecting enterprise budgets
+  - Regulatory changes in data privacy
+  - Talent acquisition challenges
+
+mitigation_strategies:
+  - Diversify customer base across industries
+  - Build 18-month cash runway
+  - Invest in compliance automation
+  - Improve employee retention programs
+
+updated: 2025-12-11

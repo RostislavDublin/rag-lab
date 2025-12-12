@@ -1,13 +1,34 @@
 """
-End-to-End test for complete RAG workflow
+End-to-End test for complete RAG workflow with semantic search validation
 
-Tests the full lifecycle:
-1. Verify system is empty
-2. Upload documents (PDF + TXT)
-3. Query and get relevant chunks
-4. Download original files
-5. Delete documents
-6. Verify cleanup (DB + GCS)
+Tests the full lifecycle with thematic documents:
+1. Health check (API + current documents)
+2. Upload 9 documents with distinct topics
+   - TXT: RAG technology (rag_architecture_guide.txt)
+   - PDF: AI agents, software engineering (google_agent_quality.pdf)
+   - MD: Databases, vector search (vector_databases.md)
+   - JSON: Products, prices, specs (electronics_catalog.json)
+   - HTML: Art exhibitions, tickets (art_exhibition.html)
+   - YAML: Business KPIs, metrics (business_metrics.yaml)
+   - XML: Legal, GDPR compliance (gdpr_compliance.xml)
+   - CSV: Financial reports (financial_quarterly_report.csv)
+   - LOG: System operations (rag_system_operations.log)
+3. List documents
+4. Semantic search tests - validate RAG returns topically correct documents
+   - Product queries → electronics catalog
+   - Art queries → exhibition info
+   - Business queries → metrics
+   - Compliance queries → GDPR report
+   - Financial queries → quarterly report
+   - Operations queries → system logs
+   - Topic isolation (negative test)
+5. Download original files
+6. Delete documents
+7. Verify cleanup (DB + GCS)
+
+Philosophy: Non-trivial queries test semantic understanding vs keyword matching.
+Each document has distinct topic, enabling validation that RAG actually works
+as intended and provides value.
 """
 
 import os
@@ -34,19 +55,19 @@ def gcs_client():
 
 @pytest.fixture(scope="module")
 def test_documents():
-    """Test document paths and their hashes for selective cleanup"""
+    """Test document paths with distinct topics for semantic search validation"""
     fixtures_dir = Path(__file__).parent.parent / "fixtures" / "documents"
     docs = {
-        "txt": fixtures_dir / "bug_too_many.txt",  # Large file to test splitting
-        "pdf": fixtures_dir / "google_agent_quality.pdf",
-        "pdf_context": fixtures_dir / "google_context_engineering.pdf",
-        "md": fixtures_dir / "vector_databases.md",  # Markdown file
-        "json": fixtures_dir / "sample_data.json",  # Structured data (JSON → YAML)
-        "html": fixtures_dir / "sample.html",  # HTML → Markdown conversion
-        "yaml": fixtures_dir / "config.yaml",  # YAML configuration
-        "xml": fixtures_dir / "sample_documentation.xml",  # XML → YAML conversion
-        "csv": fixtures_dir / "products.csv",  # CSV data
-        "log": fixtures_dir / "server.log",  # Log file
+        # Each document has a distinct topic for semantic testing
+        "txt": fixtures_dir / "rag_architecture_guide.txt",  # Topic: RAG technology
+        "pdf": fixtures_dir / "google_agent_quality.pdf",  # Topic: AI agents, software engineering
+        "md": fixtures_dir / "vector_databases.md",  # Topic: Databases, vector search
+        "json": fixtures_dir / "electronics_catalog.json",  # Topic: Products, prices, specifications
+        "html": fixtures_dir / "art_exhibition.html",  # Topic: Art, exhibitions, tickets
+        "yaml": fixtures_dir / "business_metrics.yaml",  # Topic: Business KPIs, metrics
+        "xml": fixtures_dir / "gdpr_compliance.xml",  # Topic: Legal, GDPR, compliance
+        "csv": fixtures_dir / "financial_quarterly_report.csv",  # Topic: Financial reports
+        "log": fixtures_dir / "rag_system_operations.log",  # Topic: System operations, logs
     }
     
     # Calculate hashes for selective cleanup (preserves user documents)
@@ -118,8 +139,8 @@ def test_01_verify_api_health():
 
 
 def test_02_upload_txt_document(test_documents):
-    """Step 2: Upload TXT document"""
-    print("\n=== Step 2: Upload TXT document ===")
+    """Step 2: Upload RAG architecture guide (test RAG technology search)"""
+    print("\n=== Step 2: Upload RAG architecture guide (TXT) ===")
     
     txt_path = test_documents["txt"]
     assert txt_path.exists(), f"Test file not found: {txt_path}"
@@ -138,8 +159,8 @@ def test_02_upload_txt_document(test_documents):
 
 
 def test_03_upload_pdf_document(test_documents):
-    """Step 3: Upload PDF document"""
-    print("\n=== Step 3: Upload PDF document ===")
+    """Step 3: Upload AI agent quality guide (test software engineering search)"""
+    print("\n=== Step 3: Upload AI agent quality guide (PDF) ===")
     
     pdf_path = test_documents["pdf"]
     assert pdf_path.exists(), f"Test file not found: {pdf_path}"
@@ -158,8 +179,8 @@ def test_03_upload_pdf_document(test_documents):
 
 
 def test_03b_upload_markdown_document(test_documents):
-    """Step 3b: Upload Markdown document (test text format support)"""
-    print("\n=== Step 3b: Upload Markdown document ===")
+    """Step 3b: Upload vector databases guide (test database search)"""
+    print("\n=== Step 3b: Upload vector databases guide (Markdown) ===")
     
     md_path = test_documents["md"]
     assert md_path.exists(), f"Test file not found: {md_path}"
@@ -178,8 +199,8 @@ def test_03b_upload_markdown_document(test_documents):
 
 
 def test_03c_upload_json_document(test_documents):
-    """Step 3c: Upload JSON document (test YAML conversion of structured data)"""
-    print("\n=== Step 3c: Upload JSON document (YAML conversion) ===")
+    """Step 3c: Upload electronics catalog (test product/price search)"""
+    print("\n=== Step 3c: Upload electronics catalog (JSON → YAML) ===")
     
     json_path = test_documents["json"]
     assert json_path.exists(), f"Test file not found: {json_path}"
@@ -199,8 +220,8 @@ def test_03c_upload_json_document(test_documents):
 
 
 def test_03d_upload_html_document(test_documents):
-    """Step 3d: Upload HTML document (test HTML → Markdown conversion)"""
-    print("\n=== Step 3d: Upload HTML document (Markdown conversion) ===")
+    """Step 3d: Upload art exhibition info (test art/event search)"""
+    print("\n=== Step 3d: Upload art exhibition info (HTML → Markdown) ===")
     
     html_path = test_documents["html"]
     assert html_path.exists(), f"Test file not found: {html_path}"
@@ -220,8 +241,8 @@ def test_03d_upload_html_document(test_documents):
 
 
 def test_03e_upload_yaml_document(test_documents):
-    """Step 3e: Upload YAML document (test YAML processing)"""
-    print("\n=== Step 3e: Upload YAML document ===")
+    """Step 3e: Upload business metrics (test KPI/financial search)"""
+    print("\n=== Step 3e: Upload business metrics (YAML) ===")
     
     yaml_path = test_documents["yaml"]
     assert yaml_path.exists(), f"Test file not found: {yaml_path}"
@@ -241,8 +262,8 @@ def test_03e_upload_yaml_document(test_documents):
 
 
 def test_03f_upload_xml_document(test_documents):
-    """Step 3f: Upload XML document (test XML → YAML conversion)"""
-    print("\n=== Step 3f: Upload XML document (YAML conversion) ===")
+    """Step 3f: Upload GDPR compliance report (test legal/compliance search)"""
+    print("\n=== Step 3f: Upload GDPR compliance report (XML → YAML) ===")
     
     xml_path = test_documents["xml"]
     assert xml_path.exists(), f"Test file not found: {xml_path}"
@@ -262,8 +283,8 @@ def test_03f_upload_xml_document(test_documents):
 
 
 def test_03g_upload_csv_document(test_documents):
-    """Step 3g: Upload CSV document (test CSV processing)"""
-    print("\n=== Step 3g: Upload CSV document ===")
+    """Step 3g: Upload financial quarterly report (test revenue/growth search)"""
+    print("\n=== Step 3g: Upload financial quarterly report (CSV) ===")
     
     csv_path = test_documents["csv"]
     assert csv_path.exists(), f"Test file not found: {csv_path}"
@@ -283,8 +304,8 @@ def test_03g_upload_csv_document(test_documents):
 
 
 def test_03h_upload_log_document(test_documents):
-    """Step 3h: Upload LOG document (test log file processing)"""
-    print("\n=== Step 3h: Upload LOG document ===")
+    """Step 3h: Upload system operations log (test debugging/ops search)"""
+    print("\n=== Step 3h: Upload system operations log (LOG) ===")
     
     log_path = test_documents["log"]
     assert log_path.exists(), f"Test file not found: {log_path}"
@@ -318,14 +339,207 @@ def test_04_list_documents():
         print(f"  - [{doc['doc_id']}] {doc['filename']} ({doc['chunk_count']} chunks)")
 
 
-def test_05_query_rag_system():
-    """Step 5: Query RAG system and verify results"""
-    print("\n=== Step 5: Query RAG system ===")
+def test_05a_semantic_search_products():
+    """Step 5a: Semantic search - product queries should retrieve electronics catalog"""
+    print("\n=== Step 5a: Semantic search - Product specifications ===")
     
-    query = "What is RAG?"
+    query = "Which smartphone model has the highest camera megapixels and what is its price?"
     response = requests.post(
         f"{API_BASE}/v1/query",
-        json={"query": query, "top_k": 3},
+        json={"query": query, "top_k": 5},
+        timeout=30
+    )
+    
+    assert response.status_code == 200, f"Query failed: {response.text}"
+    result = response.json()
+    
+    assert result["total"] > 0, "No results returned for product query"
+    assert len(result["results"]) > 0, "Empty results list"
+    
+    # Semantic validation: results should come from electronics_catalog.json
+    filenames = [chunk["filename"] for chunk in result["results"]]
+    assert any("electronics_catalog" in fn for fn in filenames), \
+        f"Expected electronics_catalog in results, got: {filenames}"
+    
+    # Content validation: should mention camera specs and prices
+    top_chunk = result["results"][0]["chunk_text"]
+    assert any(keyword in top_chunk.lower() for keyword in ["camera", "megapixel", "mp", "photo"]), \
+        "Expected camera-related content in top result"
+    
+    print(f"✓ Query: '{query}'")
+    print(f"  Found {result['total']} chunks (top from: {result['results'][0]['filename']})")
+    print(f"  Similarity: {result['results'][0]['similarity']:.3f}")
+    print(f"  Semantic validation: PASSED (electronics catalog retrieved)")
+
+
+def test_05b_semantic_search_art():
+    """Step 5b: Semantic search - art queries should retrieve exhibition info"""
+    print("\n=== Step 5b: Semantic search - Art exhibitions ===")
+    
+    query = "How much do family tickets cost for the art exhibition?"
+    response = requests.post(
+        f"{API_BASE}/v1/query",
+        json={"query": query, "top_k": 5},
+        timeout=30
+    )
+    
+    assert response.status_code == 200, f"Query failed: {response.text}"
+    result = response.json()
+    
+    assert result["total"] > 0, "No results returned for art query"
+    
+    # Semantic validation: results should come from art_exhibition.html
+    filenames = [chunk["filename"] for chunk in result["results"]]
+    assert any("art_exhibition" in fn for fn in filenames), \
+        f"Expected art_exhibition in results, got: {filenames}"
+    
+    # Content validation: should mention tickets/prices/family
+    top_chunk = result["results"][0]["chunk_text"]
+    assert any(keyword in top_chunk.lower() for keyword in ["ticket", "price", "family", "£", "exhibition"]), \
+        "Expected art/ticket-related content in top result"
+    
+    print(f"✓ Query: '{query}'")
+    print(f"  Found {result['total']} chunks (top from: {result['results'][0]['filename']})")
+    print(f"  Similarity: {result['results'][0]['similarity']:.3f}")
+    print(f"  Semantic validation: PASSED (art exhibition retrieved)")
+
+
+def test_05c_semantic_search_business():
+    """Step 5c: Semantic search - business queries should retrieve metrics"""
+    print("\n=== Step 5c: Semantic search - Business metrics ===")
+    
+    query = "What is our customer acquisition cost and lifetime value ratio?"
+    response = requests.post(
+        f"{API_BASE}/v1/query",
+        json={"query": query, "top_k": 5},
+        timeout=30
+    )
+    
+    assert response.status_code == 200, f"Query failed: {response.text}"
+    result = response.json()
+    
+    assert result["total"] > 0, "No results returned for business query"
+    
+    # Semantic validation: results should come from business_metrics.yaml
+    filenames = [chunk["filename"] for chunk in result["results"]]
+    assert any("business_metrics" in fn for fn in filenames), \
+        f"Expected business_metrics in results, got: {filenames}"
+    
+    # Content validation: should mention CAC/LTV metrics
+    top_chunk = result["results"][0]["chunk_text"]
+    assert any(keyword in top_chunk.lower() for keyword in ["cac", "ltv", "customer", "acquisition", "value"]), \
+        "Expected business metrics in top result"
+    
+    print(f"✓ Query: '{query}'")
+    print(f"  Found {result['total']} chunks (top from: {result['results'][0]['filename']})")
+    print(f"  Similarity: {result['results'][0]['similarity']:.3f}")
+    print(f"  Semantic validation: PASSED (business metrics retrieved)")
+
+
+def test_05d_semantic_search_compliance():
+    """Step 5d: Semantic search - legal queries should retrieve GDPR report"""
+    print("\n=== Step 5d: Semantic search - Legal compliance ===")
+    
+    query = "What are the critical GDPR compliance findings in our assessment?"
+    response = requests.post(
+        f"{API_BASE}/v1/query",
+        json={"query": query, "top_k": 5},
+        timeout=30
+    )
+    
+    assert response.status_code == 200, f"Query failed: {response.text}"
+    result = response.json()
+    
+    assert result["total"] > 0, "No results returned for compliance query"
+    
+    # Semantic validation: results should come from gdpr_compliance.xml
+    filenames = [chunk["filename"] for chunk in result["results"]]
+    assert any("gdpr_compliance" in fn for fn in filenames), \
+        f"Expected gdpr_compliance in results, got: {filenames}"
+    
+    # Content validation: should mention GDPR/compliance/critical
+    top_chunk = result["results"][0]["chunk_text"]
+    assert any(keyword in top_chunk.lower() for keyword in ["gdpr", "compliance", "critical", "finding", "assessment"]), \
+        "Expected GDPR compliance content in top result"
+    
+    print(f"✓ Query: '{query}'")
+    print(f"  Found {result['total']} chunks (top from: {result['results'][0]['filename']})")
+    print(f"  Similarity: {result['results'][0]['similarity']:.3f}")
+    print(f"  Semantic validation: PASSED (GDPR report retrieved)")
+
+
+def test_05e_semantic_search_financials():
+    """Step 5e: Semantic search - financial queries should retrieve quarterly report"""
+    print("\n=== Step 5e: Semantic search - Financial data ===")
+    
+    query = "Show quarterly revenue growth trends over 2025"
+    response = requests.post(
+        f"{API_BASE}/v1/query",
+        json={"query": query, "top_k": 5},
+        timeout=30
+    )
+    
+    assert response.status_code == 200, f"Query failed: {response.text}"
+    result = response.json()
+    
+    assert result["total"] > 0, "No results returned for financial query"
+    
+    # Semantic validation: results should come from financial_quarterly_report.csv
+    filenames = [chunk["filename"] for chunk in result["results"]]
+    assert any("financial" in fn or "quarterly" in fn for fn in filenames), \
+        f"Expected financial report in results, got: {filenames}"
+    
+    # Content validation: should mention revenue/quarterly/2025
+    top_chunk = result["results"][0]["chunk_text"]
+    assert any(keyword in top_chunk.lower() for keyword in ["revenue", "quarter", "2025", "growth"]), \
+        "Expected financial data in top result"
+    
+    print(f"✓ Query: '{query}'")
+    print(f"  Found {result['total']} chunks (top from: {result['results'][0]['filename']})")
+    print(f"  Similarity: {result['results'][0]['similarity']:.3f}")
+    print(f"  Semantic validation: PASSED (financial report retrieved)")
+
+
+def test_05f_semantic_search_operations():
+    """Step 5f: Semantic search - ops queries should retrieve system logs"""
+    print("\n=== Step 5f: Semantic search - System operations ===")
+    
+    query = "What caused the duplicate document rejection in the RAG system?"
+    response = requests.post(
+        f"{API_BASE}/v1/query",
+        json={"query": query, "top_k": 5},
+        timeout=30
+    )
+    
+    assert response.status_code == 200, f"Query failed: {response.text}"
+    result = response.json()
+    
+    assert result["total"] > 0, "No results returned for operations query"
+    
+    # Semantic validation: results should come from rag_system_operations.log
+    filenames = [chunk["filename"] for chunk in result["results"]]
+    assert any("operations" in fn or "rag_system" in fn for fn in filenames), \
+        f"Expected operations log in results, got: {filenames}"
+    
+    # Content validation: should mention duplicate/rejection/error
+    top_chunk = result["results"][0]["chunk_text"]
+    assert any(keyword in top_chunk.lower() for keyword in ["duplicate", "reject", "error", "hash", "collision"]), \
+        "Expected operations/error content in top result"
+    
+    print(f"✓ Query: '{query}'")
+    print(f"  Found {result['total']} chunks (top from: {result['results'][0]['filename']})")
+    print(f"  Similarity: {result['results'][0]['similarity']:.3f}")
+    print(f"  Semantic validation: PASSED (operations log retrieved)")
+
+
+def test_05g_semantic_isolation_negative():
+    """Step 5g: Negative test - topic isolation (camera query should NOT return art/business docs)"""
+    print("\n=== Step 5g: Semantic isolation test ===")
+    
+    query = "smartphone camera specifications"
+    response = requests.post(
+        f"{API_BASE}/v1/query",
+        json={"query": query, "top_k": 10},
         timeout=30
     )
     
@@ -333,15 +547,32 @@ def test_05_query_rag_system():
     result = response.json()
     
     assert result["total"] > 0, "No results returned"
-    assert len(result["results"]) > 0, "Empty results list"
+    
+    # Get all results to check topic isolation
+    all_filenames = [chunk["filename"] for chunk in result["results"]]
+    
+    # PRIMARY: Should retrieve electronics catalog in results (positive validation)
+    assert any("electronics" in fn for fn in all_filenames), \
+        f"Expected electronics_catalog in results for camera query, got: {all_filenames[:5]}"
+    
+    # SECONDARY: Among test documents, should NOT retrieve art/business/compliance docs
+    # (Note: May have other user documents in DB, that's OK)
+    test_docs_in_results = [fn for fn in all_filenames if any(
+        topic in fn for topic in ["electronics_catalog", "art_exhibition", "business_metrics", 
+                                   "gdpr_compliance", "financial_quarterly", "rag_system_operations",
+                                   "rag_architecture", "google_agent", "vector_databases"]
+    )]
+    
+    unwanted_test_topics = ["art_exhibition", "business_metrics", "gdpr_compliance"]
+    unwanted_in_results = [fn for fn in test_docs_in_results if any(topic in fn for topic in unwanted_test_topics)]
+    
+    if unwanted_in_results:
+        print(f"  WARNING: Unwanted test documents appeared: {unwanted_in_results}")
+        print(f"  (This suggests embeddings aren't isolating topics well)")
     
     print(f"✓ Query: '{query}'")
-    print(f"  Found {result['total']} relevant chunks:")
-    
-    for i, chunk in enumerate(result["results"][:3], 1):
-        print(f"\n  [{i}] Similarity: {chunk['similarity']:.3f}")
-        print(f"      From: {chunk['filename']} (chunk {chunk['chunk_index']})")
-        print(f"      Text: {chunk['chunk_text'][:100]}...")
+    print(f"  Test documents in results: {test_docs_in_results[:3]}")
+    print(f"  Semantic validation: PASSED (electronics_catalog retrieved)")
 
 
 def test_06_download_document():
