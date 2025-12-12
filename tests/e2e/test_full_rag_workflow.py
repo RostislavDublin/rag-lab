@@ -42,6 +42,11 @@ def test_documents():
         "pdf_context": fixtures_dir / "google_context_engineering.pdf",
         "md": fixtures_dir / "vector_databases.md",  # Markdown file
         "json": fixtures_dir / "sample_data.json",  # Structured data (JSON → YAML)
+        "html": fixtures_dir / "sample.html",  # HTML → Markdown conversion
+        "yaml": fixtures_dir / "config.yaml",  # YAML configuration
+        "xml": fixtures_dir / "sample_documentation.xml",  # XML → YAML conversion
+        "csv": fixtures_dir / "products.csv",  # CSV data
+        "log": fixtures_dir / "server.log",  # Log file
     }
     
     # Calculate hashes for selective cleanup (preserves user documents)
@@ -49,6 +54,11 @@ def test_documents():
     docs["pdf_hash"] = calculate_file_hash(docs["pdf"])
     docs["md_hash"] = calculate_file_hash(docs["md"])
     docs["json_hash"] = calculate_file_hash(docs["json"])
+    docs["html_hash"] = calculate_file_hash(docs["html"])
+    docs["yaml_hash"] = calculate_file_hash(docs["yaml"])
+    docs["xml_hash"] = calculate_file_hash(docs["xml"])
+    docs["csv_hash"] = calculate_file_hash(docs["csv"])
+    docs["log_hash"] = calculate_file_hash(docs["log"])
     
     return docs
 
@@ -60,7 +70,7 @@ def cleanup_test_documents(request, test_documents):
     
     # Delete test documents by hash (if they exist from previous run)
     deleted_before = 0
-    for hash_key in ["txt_hash", "pdf_hash", "md_hash"]:
+    for hash_key in ["txt_hash", "pdf_hash", "md_hash", "json_hash", "html_hash", "yaml_hash", "xml_hash", "csv_hash", "log_hash"]:
         file_hash = test_documents[hash_key]
         response = requests.delete(f"{API_BASE}/v1/documents/by-hash/{file_hash}", timeout=30)
         if response.status_code == 200:
@@ -79,7 +89,7 @@ def cleanup_test_documents(request, test_documents):
     if not request.config.getoption("--no-cleanup"):
         print("\n🧹 Cleaning up test documents after tests...")
         deleted_after = 0
-        for hash_key in ["txt_hash", "pdf_hash", "md_hash", "json_hash"]:
+        for hash_key in ["txt_hash", "pdf_hash", "md_hash", "json_hash", "html_hash", "yaml_hash", "xml_hash", "csv_hash", "log_hash"]:
             file_hash = test_documents[hash_key]
             response = requests.delete(f"{API_BASE}/v1/documents/by-hash/{file_hash}", timeout=30)
             if response.status_code == 200:
@@ -186,6 +196,111 @@ def test_03c_upload_json_document(test_documents):
     print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
     print(f"  - Chunks: {result['chunks_created']}")
     print("  - Note: JSON converted to YAML for semantic preservation")
+
+
+def test_03d_upload_html_document(test_documents):
+    """Step 3d: Upload HTML document (test HTML → Markdown conversion)"""
+    print("\n=== Step 3d: Upload HTML document (Markdown conversion) ===")
+    
+    html_path = test_documents["html"]
+    assert html_path.exists(), f"Test file not found: {html_path}"
+    
+    with open(html_path, "rb") as f:
+        files = {"file": (html_path.name, f, "text/html")}
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+    
+    assert response.status_code == 200, f"Upload failed: {response.text}"
+    result = response.json()
+    
+    assert result["chunks_created"] > 0, "No chunks created from HTML"
+    print(f"✓ Uploaded: {result['filename']}")
+    print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
+    print(f"  - Chunks: {result['chunks_created']}")
+    print("  - Note: HTML converted to Markdown (preserves structure)")
+
+
+def test_03e_upload_yaml_document(test_documents):
+    """Step 3e: Upload YAML document (test YAML processing)"""
+    print("\n=== Step 3e: Upload YAML document ===")
+    
+    yaml_path = test_documents["yaml"]
+    assert yaml_path.exists(), f"Test file not found: {yaml_path}"
+    
+    with open(yaml_path, "rb") as f:
+        files = {"file": (yaml_path.name, f, "application/x-yaml")}
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+    
+    assert response.status_code == 200, f"Upload failed: {response.text}"
+    result = response.json()
+    
+    assert result["chunks_created"] > 0, "No chunks created from YAML"
+    print(f"✓ Uploaded: {result['filename']}")
+    print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
+    print(f"  - Chunks: {result['chunks_created']}")
+    print("  - Note: YAML kept as-is (already optimal for LLM)")
+
+
+def test_03f_upload_xml_document(test_documents):
+    """Step 3f: Upload XML document (test XML → YAML conversion)"""
+    print("\n=== Step 3f: Upload XML document (YAML conversion) ===")
+    
+    xml_path = test_documents["xml"]
+    assert xml_path.exists(), f"Test file not found: {xml_path}"
+    
+    with open(xml_path, "rb") as f:
+        files = {"file": (xml_path.name, f, "application/xml")}
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+    
+    assert response.status_code == 200, f"Upload failed: {response.text}"
+    result = response.json()
+    
+    assert result["chunks_created"] > 0, "No chunks created from XML"
+    print(f"✓ Uploaded: {result['filename']}")
+    print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
+    print(f"  - Chunks: {result['chunks_created']}")
+    print("  - Note: XML converted to YAML (preserves semantic structure)")
+
+
+def test_03g_upload_csv_document(test_documents):
+    """Step 3g: Upload CSV document (test CSV processing)"""
+    print("\n=== Step 3g: Upload CSV document ===")
+    
+    csv_path = test_documents["csv"]
+    assert csv_path.exists(), f"Test file not found: {csv_path}"
+    
+    with open(csv_path, "rb") as f:
+        files = {"file": (csv_path.name, f, "text/csv")}
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+    
+    assert response.status_code == 200, f"Upload failed: {response.text}"
+    result = response.json()
+    
+    assert result["chunks_created"] > 0, "No chunks created from CSV"
+    print(f"✓ Uploaded: {result['filename']}")
+    print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
+    print(f"  - Chunks: {result['chunks_created']}")
+    print("  - Note: CSV kept as plain text (tabular structure preserved)")
+
+
+def test_03h_upload_log_document(test_documents):
+    """Step 3h: Upload LOG document (test log file processing)"""
+    print("\n=== Step 3h: Upload LOG document ===")
+    
+    log_path = test_documents["log"]
+    assert log_path.exists(), f"Test file not found: {log_path}"
+    
+    with open(log_path, "rb") as f:
+        files = {"file": (log_path.name, f, "text/plain")}
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, timeout=60)
+    
+    assert response.status_code == 200, f"Upload failed: {response.text}"
+    result = response.json()
+    
+    assert result["chunks_created"] > 0, "No chunks created from LOG"
+    print(f"✓ Uploaded: {result['filename']}")
+    print(f"  - ID: {result['doc_id']}, UUID: {result['doc_uuid']}")
+    print(f"  - Chunks: {result['chunks_created']}")
+    print("  - Note: Log file kept as plain text (timestamps + messages)")
 
 
 def test_04_list_documents():

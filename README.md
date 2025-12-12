@@ -788,12 +788,12 @@ FROM original_documents;
 
 ### 3. Run Tests
 
-Comprehensive test suite with 44 tests across 3 tiers:
+Comprehensive test suite with 68 tests across 3 tiers:
 
 ```bash
-# Unit tests (30 tests) - fast, mocked dependencies
+# Unit tests (49 tests) - fast, mocked dependencies
 pytest tests/unit/ -v
-# Tests: extraction, chunking, format parsing, utilities
+# Tests: extraction, chunking, format parsing, validation, utilities
 # Uses Mock() for genai_client - no real API calls
 
 # Integration tests (5 tests) - real Vertex AI
@@ -802,9 +802,9 @@ pytest tests/integration/ -v
 # Uses real Vertex AI embeddings via .env.local
 # To skip: pytest -m 'not integration'
 
-# E2E tests (9 tests) - full HTTP workflow
+# E2E tests (14 tests) - full HTTP workflow
 pytest tests/e2e/ -v
-# Tests: upload → query → delete with running server
+# Tests: upload (10 formats: TXT, PDF, MD, JSON, HTML, YAML, XML, CSV, LOG) → query → delete
 # Requires: server on localhost:8080
 
 # Run all tests
@@ -873,18 +873,19 @@ rag-lab/
 ├── tests/
 │   ├── conftest.py                # Shared pytest configuration
 │   ├── README.md                  # Test architecture documentation
-│   ├── unit/                      # 30 tests (mocked, fast)
-│   │   ├── test_text_formats.py   # Format parsing (JSON→YAML, XML→YAML)
+│   ├── unit/                      # 49 tests (mocked, fast)
+│   │   ├── test_text_formats.py   # Format parsing (JSON→YAML, XML→YAML, HTML→MD)
 │   │   ├── test_chunking.py       # Chunking logic
 │   │   ├── test_adaptive_chunking.py
+│   │   ├── test_file_validator.py # 17 tests (3-tier validation)
 │   │   ├── test_fixture_extraction.py
 │   │   └── test_utils.py          # SHA256 hashing
 │   ├── integration/               # 5 tests (real Vertex AI)
 │   │   ├── conftest.py            # Real genai_client via .env.local
 │   │   ├── test_large_txt_processing.py
 │   │   └── test_chunking_integrity.py
-│   ├── e2e/                       # 9 tests (full HTTP workflow)
-│   │   └── test_full_rag_workflow.py
+│   ├── e2e/                       # 14 tests (full HTTP workflow)
+│   │   └── test_full_rag_workflow.py  # 10 format uploads + query + cleanup
 │   └── fixtures/
 │       └── documents/             # 15 test files (TXT, PDF, MD, JSON, XML, CSV, YAML, LOG, HTML)
 │           ├── rag_architecture_guide.txt
@@ -1023,7 +1024,7 @@ cd deployment
 - **Google Gen AI SDK:** text-embedding-005 embeddings (768 dimensions)
 - **Local development:** uvicorn hot reload + Cloud SQL Proxy
 - **Automated deployment:** GCP infrastructure setup + Cloud Run
-- **Comprehensive testing:** 64 tests (49 unit, 5 integration, 10 e2e)
+- **Comprehensive testing:** 68 tests (49 unit, 5 integration, 14 e2e)
 - **Test fixtures:** 15 documents covering all supported formats
 
 ## Roadmap
