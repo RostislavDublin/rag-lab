@@ -101,7 +101,7 @@ def test_all_formats_produce_searchable_text(processor, fixtures_dir):
         'md': 'vector_databases.md',
         'csv': 'products.csv',
         'yaml': 'config.yaml',
-        'log': 'server.log',
+        'log': 'rag_system_operations.log',
     }
     
     for fmt, filename in formats.items():
@@ -164,8 +164,8 @@ def test_yaml_fixture_extraction(processor, fixtures_dir):
 
 
 def test_log_fixture_extraction(processor, fixtures_dir):
-    """Test extraction from server.log fixture"""
-    log_file = fixtures_dir / "server.log"
+    """Test extraction from rag_system_operations.log fixture"""
+    log_file = fixtures_dir / "rag_system_operations.log"
     
     with open(log_file, 'rb') as f:
         content = f.read()
@@ -175,7 +175,7 @@ def test_log_fixture_extraction(processor, fixtures_dir):
     # Check log content preserved
     assert '2025-12-11' in text  # Timestamps
     assert 'INFO' in text  # Log levels
-    assert 'Starting RAG Lab API server' in text
+    assert 'RAG API server' in text  # Server startup
     assert 'ERROR' in text  # Error messages
     
     # Logs kept as plain text (timestamps + messages useful for RAG)
