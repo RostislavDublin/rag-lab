@@ -72,6 +72,9 @@ models/
 *.log
 logs/
 
+# Exception: test fixtures
+!tests/fixtures/**/*.log
+
 # Temporary files
 tmp/
 temp/
