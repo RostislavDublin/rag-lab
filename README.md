@@ -313,14 +313,20 @@ curl -X POST http://localhost:8080/v1/query \
 Upload and process documents with strict validation. Automatically detects and rejects duplicates.
 
 **Supported formats (17 total):**
-- **Documents:** `.pdf`, `.txt`, `.md`, `.markdown`, `.rst`, `.log`
+- **Documents:** `.pdf` (→MD), `.html` (→MD), `.txt`, `.md`, `.markdown`, `.rst`, `.log`
 - **Structured data:** `.json` (→YAML), `.xml` (→YAML), `.csv`, `.yaml`, `.yml`, `.toml`, `.ini`
-- **Code files:** `.py`, `.js`, `.html`, `.css`
+- **Code files:** `.py`, `.js`, `.css`
 
-**Structured data processing:**
-- JSON/XML files are converted to YAML format to preserve semantic structure
-- Minimizes syntax noise while maintaining full information content
-- LLM-friendly representation for better RAG quality
+**Document processing:**
+- **PDF → Markdown:** Structure-preserving conversion (headings, tables, lists)
+- **HTML → Markdown:** Professional conversion with html2text (preserves formatting)
+- **JSON/XML → YAML:** Minimizes syntax noise, maintains semantic structure
+- **Text formats:** Direct UTF-8 extraction (code, logs, plain text)
+
+**Why Markdown for PDF/HTML:**
+- Preserves document structure for better context understanding
+- LLM-friendly format improves embedding quality
+- Consistent representation across different source formats
 
 **File validation:**
 - All uploads validated using 3-tier strategy (see [File Validation](#file-validation))
@@ -329,11 +335,15 @@ Upload and process documents with strict validation. Automatically detects and r
 
 **Request:**
 ```bash
-# PDF file
+# PDF file (converted to Markdown)
 curl -X POST http://localhost:8080/v1/documents/upload \
   -F "file=@document.pdf"
 
-# JSON file (converted to YAML internally)
+# HTML file (converted to Markdown)
+curl -X POST http://localhost:8080/v1/documents/upload \
+  -F "file=@page.html"
+
+# JSON file (converted to YAML)
 curl -X POST http://localhost:8080/v1/documents/upload \
   -F "file=@config.json"
 ```
@@ -598,6 +608,7 @@ DATABASE_URL=postgresql://raglab:password@localhost:5432/raglab
 - `pymupdf>=1.23.0` - PDF text extraction
 - `pymupdf4llm>=0.2.7` - LLM-optimized PDF extraction (PDF → Markdown)
 - `pymupdf_layout==1.26.6` - Improved PDF layout analysis
+- `html2text>=2024.2.26` - HTML to Markdown conversion (preserves structure)
 - `pyyaml>=6.0` - YAML processing (for structured data conversion)
 - `xmltodict>=0.13.0` - XML to dictionary conversion (for JSON/XML → YAML pipeline)
 
@@ -875,9 +886,10 @@ rag-lab/
 │   ├── e2e/                       # 9 tests (full HTTP workflow)
 │   │   └── test_full_rag_workflow.py
 │   └── fixtures/
-│       └── documents/             # 14 test files (TXT, PDF, MD, JSON, XML, CSV, YAML, LOG)
+│       └── documents/             # 15 test files (TXT, PDF, MD, JSON, XML, CSV, YAML, LOG, HTML)
 │           ├── rag_architecture_guide.txt
-│           ├── google_agent_quality.pdf
+│           ├── google_agent_quality.pdf  # → Markdown conversion
+│           ├── sample.html        # → Markdown conversion
 │           ├── sample_data.json   # → YAML conversion
 │           ├── sample_documentation.xml  # → YAML conversion
 │           ├── vector_databases.md
@@ -998,8 +1010,12 @@ cd deployment
 ## Features
 
 ✅ **Implemented:**
-- **Multi-format upload:** 17 formats (PDF, TXT, MD, JSON, XML, CSV, YAML, code, logs)
-- **Structured data processing:** JSON/XML → YAML conversion preserves semantics
+- **Multi-format upload:** 17 formats (PDF→MD, HTML→MD, TXT, MD, JSON→YAML, XML→YAML, CSV, YAML, code, logs)
+- **Smart document processing:** 
+  - PDF/HTML → Markdown (preserves structure: headings, tables, lists)
+  - JSON/XML → YAML (minimizes syntax noise, maintains semantics)
+  - Text formats → direct UTF-8 extraction
+- **File validation:** 3-tier strategy (strict/structured/lenient) with magic bytes detection
 - **SHA256 deduplication:** Content-based duplicate detection
 - **Vector similarity search:** PostgreSQL + pgvector (768-dim embeddings)
 - **Hybrid storage:** PostgreSQL (metadata + vectors) + GCS (files + text)
@@ -1007,8 +1023,8 @@ cd deployment
 - **Google Gen AI SDK:** text-embedding-005 embeddings (768 dimensions)
 - **Local development:** uvicorn hot reload + Cloud SQL Proxy
 - **Automated deployment:** GCP infrastructure setup + Cloud Run
-- **Comprehensive testing:** 44 tests (30 unit, 5 integration, 9 e2e)
-- **Test fixtures:** 14 documents covering all supported formats
+- **Comprehensive testing:** 64 tests (49 unit, 5 integration, 10 e2e)
+- **Test fixtures:** 15 documents covering all supported formats
 
 ## Roadmap
 

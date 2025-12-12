@@ -21,6 +21,7 @@ from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 
 import pymupdf4llm  # PyMuPDF4LLM for LLM-optimized PDF processing
+import html2text  # HTML to Markdown conversion
 
 from google import genai
 from google.genai.types import EmbedContentConfig
@@ -193,6 +194,44 @@ class DocumentProcessor:
         
         return yaml_text
     
+    def extract_text_from_html(self, html_source) -> str:
+        """
+        Extract text from HTML file and convert to Markdown format
+        
+        Converts HTML to Markdown preserving:
+        - Document structure (headings, lists, tables)
+        - Text formatting (bold, italic, code)
+        - Links (converted to Markdown syntax)
+        - Tables (converted to Markdown tables)
+        
+        Similar to PDF processing: HTML → Markdown for consistent LLM/RAG quality
+        
+        Args:
+            html_source: HTML bytes or file path
+        
+        Returns:
+            Extracted text in Markdown format
+        """
+        # Decode HTML content
+        if isinstance(html_source, bytes):
+            html_string = html_source.decode('utf-8', errors='replace')
+        else:
+            with open(html_source, 'r', encoding='utf-8', errors='replace') as f:
+                html_string = f.read()
+        
+        # Configure html2text for optimal Markdown conversion
+        converter = html2text.HTML2Text()
+        converter.ignore_links = False  # Keep links (converted to [text](url))
+        converter.ignore_images = False  # Keep image references
+        converter.body_width = 0  # No line wrapping (preserve structure)
+        converter.single_line_break = False  # Use proper paragraph breaks
+        converter.ignore_emphasis = False  # Keep bold/italic formatting
+        
+        # Convert HTML to Markdown
+        markdown_text = converter.handle(html_string)
+        
+        return markdown_text
+    
     def extract_text(self, file_content: bytes, file_type: str) -> str:
         """
         Extract text from file based on type
@@ -220,6 +259,10 @@ class DocumentProcessor:
         elif file_ext in ('xml', 'application/xml', 'text/xml'):
             return self.extract_text_from_xml(file_content)
         
+        # HTML - convert to Markdown (preserves structure like PDF)
+        elif file_ext in ('html', 'text/html', 'htm'):
+            return self.extract_text_from_html(file_content)
+        
         # Plain text formats - simple decode
         elif file_ext in {
             'txt', 'text/plain',
@@ -232,7 +275,6 @@ class DocumentProcessor:
             'ini', 'text/plain',
             'py', 'text/x-python',
             'js', 'application/javascript',
-            'html', 'text/html',
             'css', 'text/css',
         }:
             return self.extract_text_from_txt(file_content)

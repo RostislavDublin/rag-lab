@@ -181,3 +181,35 @@ def test_log_fixture_extraction(processor, fixtures_dir):
     # Logs kept as plain text (timestamps + messages useful for RAG)
     print(f"\n=== Extracted Log ({len(text)} chars) ===")
     print(text[:300])
+
+
+def test_html_fixture_extraction(processor, fixtures_dir):
+    """Test extraction from sample.html fixture"""
+    html_file = fixtures_dir / "sample.html"
+    
+    with open(html_file, 'rb') as f:
+        content = f.read()
+    
+    text = processor.extract_text(content, '.html')
+    
+    # Check Markdown conversion preserved structure
+    assert 'RAG System Overview' in text  # H1 heading
+    assert 'Retrieval-Augmented Generation' in text  # Content
+    assert 'Key Components' in text  # H2 heading
+    assert 'PostgreSQL' in text  # List items
+    assert 'pgvector' in text
+    assert 'Supported Formats' in text  # Table heading
+    assert 'Documents' in text  # Table content
+    assert 'Structured Data' in text
+    
+    # Verify HTML tags removed (converted to Markdown)
+    assert '<html>' not in text
+    assert '<table>' not in text
+    assert '<strong>' not in text
+    assert '<li>' not in text
+    
+    # Verify links preserved (converted to Markdown)
+    assert 'rag-lab' in text or 'RAG Lab Repository' in text
+    
+    print(f"\n=== Extracted HTML ({len(text)} chars) ===")
+    print(text[:500])

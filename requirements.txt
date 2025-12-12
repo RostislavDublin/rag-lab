@@ -44,3 +44,4 @@ xmltodict>=0.13.0  # Clean XML to dict conversion
 # langchain>=0.1.0
 # langchain-google-vertexai>=0.1.0
 python-magic>=0.4.27  # Content-based file type detection (magic bytes)
+html2text>=2024.2.26  # HTML to Markdown conversion (preserves structure like PDF)

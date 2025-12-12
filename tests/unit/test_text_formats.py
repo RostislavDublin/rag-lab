@@ -142,14 +142,52 @@ This is a reStructuredText document.
 
 def test_log_file_extraction(processor):
     """Test .log file extraction"""
-    log_content = b"""2025-12-11 10:00:00 INFO Starting application
-2025-12-11 10:00:01 DEBUG Loading config
-2025-12-11 10:00:02 ERROR Connection failed
+    log_content = b"""2025-12-11 10:30:45 INFO Starting application
+2025-12-11 10:30:46 DEBUG Loading configuration
+2025-12-11 10:30:47 ERROR Connection failed
 """
     text = processor.extract_text(log_content, '.log')
     assert '2025-12-11' in text
     assert 'INFO Starting application' in text
     assert 'ERROR Connection failed' in text
+
+
+def test_html_extraction(processor):
+    """Test .html file extraction with Markdown conversion"""
+    html_content = b"""<!DOCTYPE html>
+<html>
+<head><title>Test Page</title></head>
+<body>
+    <h1>Main Heading</h1>
+    <p>This is a <strong>bold</strong> and <em>italic</em> text.</p>
+    <ul>
+        <li>Item 1</li>
+        <li>Item 2</li>
+    </ul>
+    <table>
+        <tr><th>Name</th><th>Value</th></tr>
+        <tr><td>Alpha</td><td>100</td></tr>
+    </table>
+    <a href="https://example.com">Example Link</a>
+</body>
+</html>"""
+    
+    text = processor.extract_text(html_content, '.html')
+    
+    # Verify Markdown conversion (structure preserved)
+    assert '# Main Heading' in text or 'Main Heading' in text  # Heading converted
+    assert 'bold' in text  # Text extracted
+    assert 'italic' in text
+    assert 'Item 1' in text  # List items preserved
+    assert 'Item 2' in text
+    assert 'Alpha' in text  # Table content preserved
+    assert '100' in text
+    assert 'example.com' in text or 'Example Link' in text  # Link preserved
+    
+    # Verify HTML tags removed
+    assert '<html>' not in text
+    assert '<strong>' not in text
+    assert '<table>' not in text
 
 
 def test_unsupported_format_raises_error(processor):

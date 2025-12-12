@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RAG System Documentation</title>
+</head>
+<body>
+    <h1>RAG System Overview</h1>
+    
+    <p>A <strong>Retrieval-Augmented Generation</strong> (RAG) system combines the power of 
+    information retrieval with large language models to provide <em>accurate</em> and 
+    <em>contextual</em> responses.</p>
+    
+    <h2>Key Components</h2>
+    
+    <ul>
+        <li><strong>Document Store:</strong> PostgreSQL with pgvector extension</li>
+        <li><strong>Embeddings:</strong> Google Vertex AI text-embedding-005 (768 dimensions)</li>
+        <li><strong>Search:</strong> Vector similarity using cosine distance</li>
+    </ul>
+    
+    <h2>Supported Formats</h2>
+    
+    <table border="1">
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Formats</th>
+                <th>Processing</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Documents</td>
+                <td>PDF, TXT, MD, HTML</td>
+                <td>Markdown conversion</td>
+            </tr>
+            <tr>
+                <td>Structured Data</td>
+                <td>JSON, XML, YAML</td>
+                <td>YAML normalization</td>
+            </tr>
+            <tr>
+                <td>Code</td>
+                <td>Python, JavaScript, CSS</td>
+                <td>Plain text</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <h2>Architecture Benefits</h2>
+    
+    <ol>
+        <li><strong>Quality:</strong> LLM-optimized extraction preserves document structure</li>
+        <li><strong>Portability:</strong> PostgreSQL storage (multi-cloud compatible)</li>
+        <li><strong>Scalability:</strong> Efficient vector search with pgvector</li>
+    </ol>
+    
+    <h3>Code Example</h3>
+    
+    <pre><code>from document_processor import DocumentProcessor
+
+processor = DocumentProcessor()
+text = processor.extract_text(html_bytes, "html")
+chunks = processor.chunk_text(text)
+</code></pre>
+    
+    <p>For more information, visit <a href="https://github.com/RostislavDublin/rag-lab">RAG Lab Repository</a>.</p>
+</body>
+</html>
