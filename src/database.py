@@ -176,9 +176,15 @@ class VectorDB:
         self,
         query_embedding: List[float],
         top_k: int = 5,
+        min_similarity: float = 0.0,
     ) -> List[dict]:
         """
         Search for similar chunks using cosine similarity
+        
+        Args:
+            query_embedding: Query vector
+            top_k: Maximum number of results to return
+            min_similarity: Minimum similarity threshold (0.0-1.0). Results below this are filtered out.
         
         Returns chunk indices with doc_uuid for fetching from GCS
         """
@@ -196,11 +202,13 @@ class VectorDB:
                     1 - (c.embedding <=> $1::vector) as similarity
                 FROM document_chunks c
                 JOIN original_documents d ON c.original_doc_id = d.id
+                WHERE (1 - (c.embedding <=> $1::vector)) >= $3
                 ORDER BY c.embedding <=> $1::vector
                 LIMIT $2
                 """,
                 query_embedding,
                 top_k,
+                min_similarity,
             )
             return [
                 {

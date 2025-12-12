@@ -145,6 +145,12 @@ class EmbeddingResponse(BaseModel):
 class QueryRequest(BaseModel):
     query: str = Field(..., description="User query", min_length=1)
     top_k: int = Field(default=5, ge=1, le=20, description="Number of results")
+    min_similarity: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity threshold (0.0-1.0). Results below this are filtered out."
+    )
 
 
 class QueryResultItem(BaseModel):
@@ -475,7 +481,8 @@ async def query_rag(request: QueryRequest):
         # Vector search (returns chunk indices + doc_uuid)
         results = await vector_db.search_similar_chunks(
             query_embedding=query_embedding,
-            top_k=request.top_k
+            top_k=request.top_k,
+            min_similarity=request.min_similarity
         )
         
         # Group by document UUID for efficient GCS fetching

@@ -346,7 +346,7 @@ def test_05a_semantic_search_products():
     query = "Which smartphone model has the highest camera megapixels and what is its price?"
     response = requests.post(
         f"{API_BASE}/v1/query",
-        json={"query": query, "top_k": 5},
+        json={"query": query, "top_k": 5, "min_similarity": 0.5},
         timeout=30
     )
     
@@ -379,7 +379,7 @@ def test_05b_semantic_search_art():
     query = "How much do family tickets cost for the art exhibition?"
     response = requests.post(
         f"{API_BASE}/v1/query",
-        json={"query": query, "top_k": 5},
+        json={"query": query, "top_k": 5, "min_similarity": 0.5},
         timeout=30
     )
     
@@ -411,7 +411,7 @@ def test_05c_semantic_search_business():
     query = "What is our customer acquisition cost and lifetime value ratio?"
     response = requests.post(
         f"{API_BASE}/v1/query",
-        json={"query": query, "top_k": 5},
+        json={"query": query, "top_k": 5, "min_similarity": 0.5},
         timeout=30
     )
     
@@ -443,7 +443,7 @@ def test_05d_semantic_search_compliance():
     query = "What are the critical GDPR compliance findings in our assessment?"
     response = requests.post(
         f"{API_BASE}/v1/query",
-        json={"query": query, "top_k": 5},
+        json={"query": query, "top_k": 5, "min_similarity": 0.5},
         timeout=30
     )
     
@@ -475,7 +475,7 @@ def test_05e_semantic_search_financials():
     query = "Show quarterly revenue growth trends over 2025"
     response = requests.post(
         f"{API_BASE}/v1/query",
-        json={"query": query, "top_k": 5},
+        json={"query": query, "top_k": 5, "min_similarity": 0.5},
         timeout=30
     )
     
@@ -507,7 +507,7 @@ def test_05f_semantic_search_operations():
     query = "What caused the duplicate document rejection in the RAG system?"
     response = requests.post(
         f"{API_BASE}/v1/query",
-        json={"query": query, "top_k": 5},
+        json={"query": query, "top_k": 5, "min_similarity": 0.5},
         timeout=30
     )
     
@@ -539,7 +539,7 @@ def test_05g_semantic_isolation_negative():
     query = "smartphone camera specifications"
     response = requests.post(
         f"{API_BASE}/v1/query",
-        json={"query": query, "top_k": 10},
+        json={"query": query, "top_k": 10, "min_similarity": 0.5},
         timeout=30
     )
     
