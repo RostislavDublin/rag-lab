@@ -523,7 +523,7 @@ class DocumentProcessor:
         filename: str = "unknown.pdf",
         file_type: str = "pdf",
         metadata: Optional[dict] = None,
-    ) -> List[Tuple[str, List[float], dict]]:
+    ) -> Tuple[str, List[Tuple[str, List[float], dict]], dict]:
         """
         Full pipeline: extract → chunk → embed
         
@@ -534,10 +534,14 @@ class DocumentProcessor:
             metadata: Additional metadata to attach
         
         Returns:
-            List of (chunk_text, embedding, metadata) tuples
+            Tuple of (extracted_text, list of (chunk_text, embedding, metadata) tuples, embedding_stats)
         """
         # Extract text based on file type
         text = self.extract_text(file_content, file_type)
+        
+        # Validate extracted text
+        if not text.strip():
+            raise ValueError(f"Could not extract text from {filename}")
         
         # Chunk text
         chunks = self.chunk_text(text)
@@ -565,8 +569,8 @@ class DocumentProcessor:
             }
             results.append((chunk_text, embedding, combined_meta))
         
-        # Add embedding stats to results
-        return results, embedding_stats
+        # Return extracted text + chunks with embeddings + stats
+        return text, results, embedding_stats
 
 
 # Convenience function for default provider

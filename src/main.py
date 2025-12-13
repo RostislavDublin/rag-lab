@@ -368,24 +368,19 @@ async def upload_document(
                 message=f"Document already exists (uploaded as '{existing_filename}'). Skipping duplicate."
             )
         
-        # Extract text from document
+        # Process document: extract text, chunk, and generate embeddings
         logger.info(f"Processing document: {file.filename} ({file_type})")
-        extracted_text = document_processor.extract_text(file_content, file_type)
-        logger.debug(f"Extracted {len(extracted_text)} characters")
-        
-        if not extracted_text.strip():
+        try:
+            extracted_text, chunks_data, embedding_stats = await document_processor.process_document(
+                file_content=file_content,
+                filename=file.filename,
+                file_type=file_type
+            )
+        except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Could not extract text from document"
+                detail=str(e)
             )
-        
-        # Process chunks and embeddings FIRST (before DB record)
-        logger.debug(f"Starting chunking and embedding generation...")
-        chunks_data, embedding_stats = await document_processor.process_document(
-            file_content=file_content,
-            filename=file.filename,
-            file_type=file_type
-        )
         logger.info(f"Generated {len(chunks_data)} chunks with embeddings")
         
         # Validate we got chunks
