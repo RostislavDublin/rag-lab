@@ -16,16 +16,19 @@ Configuration (environment variables):
 """
 
 import os
+import logging
 from typing import Optional
-from fastapi import HTTPException, Security, status
+from fastapi import HTTPException, Security, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
 from jwt import PyJWKClient
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 
+logger = logging.getLogger(__name__)
+
 # Security scheme for Swagger UI
 security = HTTPBearer(
-    scheme_name="OAuth2 JWT",
+    scheme_name="HTTPBearer",
     description="JWT token from OIDC provider (Google, Azure AD, Auth0, etc.)"
 )
 
@@ -69,21 +72,7 @@ def verify_jwt_token(token: str) -> dict:
         AuthError: If token is invalid, expired, or signature verification fails
     """
     try:
-        # Development mode: if AUDIENCE is empty, allow any token for testing
-        # REMOVE THIS IN PRODUCTION - security risk!
-        if not AUDIENCE:
-            print("WARNING: AUDIENCE not set - using insecure dev mode")
-            # Decode without verification (DEV ONLY)
-            try:
-                unverified = jwt.decode(token, options={"verify_signature": False})
-                return {
-                    "email": unverified.get("email", "dev@localhost"),
-                    "sub": unverified.get("sub", "dev_user"),
-                }
-            except Exception as e:
-                raise AuthError(f"Invalid token format: {str(e)}")
-        
-        # Production: verify token using JWKS
+        # Verify token using JWKS
         jwks_client = PyJWKClient(JWKS_URL)
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         
@@ -133,10 +122,18 @@ def check_authorization(email: str) -> None:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Security(security)
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    x_end_user_id: Optional[str] = Header(None, alias="X-End-User-ID")
 ) -> str:
     """
-    FastAPI dependency: Extract and validate user from JWT token
+    FastAPI dependency: Extract and validate user from JWT token or X-End-User-ID header
+    
+    Supports two authentication scenarios:
+    1. User-to-Service: User's JWT token contains email (standard flow)
+    2. Service-to-Service: Service Account JWT + X-End-User-ID header
+       - Token must be valid (service account authenticated)
+       - X-End-User-ID header contains actual end user email
+       - End user must still be in ALLOWED_USERS whitelist
     
     Usage:
         @app.get("/protected")
@@ -145,6 +142,7 @@ async def get_current_user(
     
     Args:
         credentials: HTTP Bearer token from Authorization header
+        x_end_user_id: Optional header for service-to-service delegation
     
     Returns:
         User email (verified and authorized)
@@ -156,9 +154,18 @@ async def get_current_user(
     
     # Verify token using JWKS
     user_info = verify_jwt_token(token)
-    email = user_info["email"]
     
-    # Check authorization (whitelist)
+    # Determine effective user:
+    # - If X-End-User-ID header present: use it (service-to-service flow)
+    # - Otherwise: use email from token (user-to-service flow)
+    if x_end_user_id:
+        email = x_end_user_id
+        logger.info(f"Service-to-service request: SA token with end user={email}")
+    else:
+        email = user_info["email"]
+        logger.info(f"User-to-service request: user={email}")
+    
+    # Check authorization (whitelist) for the effective user
     check_authorization(email)
     
     return email

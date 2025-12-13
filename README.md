@@ -6,6 +6,8 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Deduplication**: SHA256 file hashing prevents duplicate uploads
 - **Multi-format support**: 17 formats (PDF, TXT, MD, JSON, XML, CSV, YAML, code files, logs)
 - **Structured data**: YAML conversion for JSON/XML preserves semantic information
+- **Vendor-independent auth**: JWT/JWKS supports Google, Azure AD, Auth0, Okta
+- **Service delegation**: `X-End-User-ID` header for service-to-service flows
 - **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
 - **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
@@ -317,6 +319,42 @@ curl -X POST http://localhost:8080/v1/query \
 **Dependencies:**
 - `python-magic>=0.4.27` (Python library)
 - `libmagic` (system library: `brew install libmagic` or `apt-get install libmagic1`)
+
+## Authentication & Authorization
+
+**Vendor-independent JWT authentication** via JWKS (JSON Web Key Set):
+- Supports any OIDC provider: Google, Azure AD, Auth0, Okta
+- JWT validation using public keys (RS256)
+- No vendor lock-in - change provider by updating config
+
+**Two authentication scenarios:**
+
+1. **User-to-Service** (standard flow):
+   ```bash
+   # Get user JWT token
+   python scripts/get_user_token.py
+   
+   # Use with API
+   curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/query
+   ```
+
+2. **Service-to-Service** (delegation):
+   ```bash
+   # Service Account token + end user identification
+   curl -H "Authorization: Bearer $SA_TOKEN" \
+        -H "X-End-User-ID: user@example.com" \
+        http://localhost:8080/v1/query
+   ```
+
+**Authorization:**
+- Whitelist-based: `ALLOWED_USERS` in `.env.local`
+- Data attribution: All operations tagged with user email
+- Service accounts can act on behalf of users via `X-End-User-ID` header
+
+**Setup:**
+- OAuth2 Client in Google Cloud Console
+- `scripts/get_user_token.py` for local testing
+- See `scripts/README.md` for detailed instructions
 
 ## API Endpoints
 
@@ -1080,9 +1118,9 @@ cd deployment
 
 - [x] ~~Document listing endpoint~~ - `GET /v1/documents` implemented
 - [x] ~~Document deletion endpoint~~ - `DELETE /v1/documents/{id}` and `DELETE /v1/documents/by-hash/{hash}` implemented
+- [x] ~~Implement authentication~~ - JWT/JWKS with OAuth2, vendor-independent
 - [ ] Document download endpoint: `GET /v1/documents/{uuid}/download` (GCS signed URL)
 - [ ] Add Gemini integration for answer generation
-- [ ] Implement authentication (API keys, OAuth)
 - [ ] Add rate limiting (slowapi)
 - [ ] Enhanced monitoring and structured logging
 - [ ] Add support for DOCX, PPTX, EPUB

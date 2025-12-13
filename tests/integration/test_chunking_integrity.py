@@ -49,11 +49,11 @@ def fresh_document(auth_headers):
         yield doc_id
         
         # Cleanup after test
-        delete_resp = requests.delete(f"{API_BASE}/v1/documents/{doc_id}")
+        delete_resp = requests.delete(f"{API_BASE}/v1/documents/{doc_id}", headers=auth_headers)
         print(f"✓ Cleaned up document {doc_id}")
 
 
-def test_chunking_preserves_extracted_text(fresh_document):
+def test_chunking_preserves_extracted_text(fresh_document, auth_headers):
     """
     Test that chunks cover the entire extracted text without gaps
     
@@ -67,14 +67,14 @@ def test_chunking_preserves_extracted_text(fresh_document):
     doc_id = fresh_document
     
     # 1. Fetch extracted text (Markdown from pymupdf4llm)
-    extracted_resp = requests.get(f"{API_BASE}/v1/documents/{doc_id}/download?format=extracted")
+    extracted_resp = requests.get(f"{API_BASE}/v1/documents/{doc_id}/download?format=extracted", headers=auth_headers)
     assert extracted_resp.status_code == 200, f"Failed to fetch extracted text: {extracted_resp.status_code}"
     
     extracted_text = extracted_resp.text
     print(f"\n✓ Extracted text: {len(extracted_text)} chars")
     
     # 2. Fetch all chunks via API
-    chunks_resp = requests.get(f"{API_BASE}/v1/documents/{doc_id}/chunks")
+    chunks_resp = requests.get(f"{API_BASE}/v1/documents/{doc_id}/chunks", headers=auth_headers)
     assert chunks_resp.status_code == 200, f"Failed to fetch chunks: {chunks_resp.status_code}"
     
     chunks_data = chunks_resp.json()
@@ -201,7 +201,7 @@ def test_chunking_preserves_extracted_text(fresh_document):
     print("\n✅ All integrity checks passed!")
 
 
-def test_chunk_boundaries_respect_overlap(fresh_document):
+def test_chunk_boundaries_respect_overlap(fresh_document, auth_headers):
     """
     Test that chunk overlap is working correctly
     
@@ -210,7 +210,7 @@ def test_chunk_boundaries_respect_overlap(fresh_document):
     doc_id = fresh_document
     
     # Fetch chunks
-    chunks_resp = requests.get(f"{API_BASE}/v1/documents/{doc_id}/chunks")
+    chunks_resp = requests.get(f"{API_BASE}/v1/documents/{doc_id}/chunks", headers=auth_headers)
     assert chunks_resp.status_code == 200
     
     chunks = chunks_resp.json()["chunks"]

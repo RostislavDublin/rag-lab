@@ -1,8 +1,14 @@
 """Pytest configuration for E2E tests"""
 
 import pytest
-import jwt
-from datetime import datetime, timedelta
+import sys
+from pathlib import Path
+
+# Add tests directory to path for auth_manager import
+tests_dir = Path(__file__).parent
+sys.path.insert(0, str(tests_dir))
+
+from auth_manager import get_token_manager
 
 
 def pytest_addoption(parser):
@@ -16,30 +22,40 @@ def pytest_addoption(parser):
 
 
 @pytest.fixture(scope="session")
-def test_auth_token():
+def token_manager():
     """
-    Generate a test JWT token for authenticated API calls.
+    Global TokenManager for all tests.
     
-    In dev mode (GOOGLE_CLIENT_ID empty), src/auth.py accepts any JWT.
-    This generates a simple token with test user email.
+    Handles:
+    - Token caching (~/.rag-lab-refresh-token.json)
+    - Silent token refresh when expired
+    - Automatic retry on 401 errors
+    
+    First test run: Opens browser for OAuth (gets refresh_token)
+    Subsequent runs: Silent refresh (no user interaction)
     """
-    payload = {
-        "email": "javaisforever@gmail.com",  # Whitelisted test user
-        "sub": "test_user_12345",
-        "name": "Test User",
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(hours=1),
-    }
-    
-    # Create JWT with HS256 (dev mode doesn't verify signature)
-    token = jwt.encode(payload, "test_secret", algorithm="HS256")
-    return token
+    return get_token_manager()
 
 
 @pytest.fixture(scope="session")
-def auth_headers(test_auth_token):
-    """HTTP headers with Bearer token for authenticated requests"""
-    return {
-        "Authorization": f"Bearer {test_auth_token}"
-    }
+def test_auth_token(token_manager):
+    """
+    Get valid JWT token using TokenManager.
+    
+    This will:
+    1. Check cache for valid token
+    2. Refresh if expired (using refresh_token)
+    3. Run OAuth flow if needed (browser, only first time)
+    """
+    return token_manager.get_token()
 
+
+@pytest.fixture(scope="session")
+def auth_headers(token_manager):
+    """
+    HTTP headers with Bearer token for authenticated requests.
+    
+    Note: For long-running tests, prefer using token_manager.get()/.post()
+    which automatically refresh on 401 errors.
+    """
+    return token_manager.get_headers()

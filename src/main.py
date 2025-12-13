@@ -139,9 +139,12 @@ def custom_openapi():
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
-            "description": "Google ID Token (OAuth2). Get from: gcloud auth print-identity-token"
+            "description": "Google ID Token (OAuth2). Get from: python scripts/get_user_token.py"
         }
     }
+    
+    # Security is applied per-endpoint via Depends(get_current_user)
+    # No global security to avoid Swagger UI issues
     
     app.openapi_schema = openapi_schema
     return app.openapi_schema

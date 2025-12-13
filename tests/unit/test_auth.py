@@ -20,32 +20,16 @@ from src.auth import (
 class TestTokenVerification:
     """Test JWT token verification using JWKS"""
     
-    def test_verify_jwt_token_dev_mode(self, monkeypatch):
-        """Test dev mode when AUDIENCE is empty"""
-        monkeypatch.setenv("AUDIENCE", "")
-        
-        # Create simple JWT without signature (for dev mode)
-        import jwt
-        token = jwt.encode(
-            {"email": "test@example.com", "sub": "test_user_id"},
-            "secret",
-            algorithm="HS256"
-        )
-        
-        # Should decode without verification in dev mode
-        user_info = verify_jwt_token(token)
-        
-        assert user_info["email"] == "test@example.com"
-        assert user_info["sub"] == "test_user_id"
-    
-    def test_verify_jwt_token_invalid_format(self, monkeypatch):
+    def test_verify_jwt_token_invalid_format(self):
         """Test invalid token format"""
-        monkeypatch.setenv("AUDIENCE", "")
+        from src.auth import verify_jwt_token, AuthError
         
+        # Global mock from conftest.py will handle this
+        # Invalid token format will fail JWT decode
         with pytest.raises(AuthError) as exc_info:
             verify_jwt_token("not_a_jwt_token")
         
-        assert "Invalid token format" in str(exc_info.value.detail)
+        assert "token verification failed" in str(exc_info.value.detail).lower() or "invalid" in str(exc_info.value.detail).lower()
     
     def test_verify_jwt_token_production(self, monkeypatch):
         """Test production mode with JWKS verification"""
@@ -93,10 +77,6 @@ class TestTokenVerification:
             # Verify JWKS client was called
             mock_jwks_client.assert_called_once()
             mock_jwt_decode.assert_called_once()
-        
-        # Restore dev mode
-        monkeypatch.setenv("AUDIENCE", "")
-        importlib.reload(auth)
     
     def test_verify_jwt_token_invalid_issuer(self, monkeypatch):
         """Test token with invalid issuer"""
@@ -134,10 +114,6 @@ class TestTokenVerification:
                 auth.verify_jwt_token(test_token)
             
             assert "Invalid token" in str(exc_info.value.detail)
-        
-        # Restore dev mode
-        monkeypatch.setenv("AUDIENCE", "")
-        importlib.reload(auth)
     
     def test_verify_jwt_token_expired(self, monkeypatch):
         """Test expired token"""
@@ -167,10 +143,6 @@ class TestTokenVerification:
                 auth.verify_jwt_token(test_token)
             
             assert "expired" in str(exc_info.value.detail).lower()
-        
-        # Restore dev mode
-        monkeypatch.setenv("AUDIENCE", "")
-        importlib.reload(auth)
 
 
 class TestAuthorization:
@@ -228,16 +200,15 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_get_current_user_success(self, monkeypatch):
         """Test successful authentication and authorization"""
-        monkeypatch.setenv("AUDIENCE", "")
-        monkeypatch.setenv("ALLOWED_USERS", "test@example.com")
+        monkeypatch.setenv("ALLOWED_USERS", "javaisforever@gmail.com")
         
         from src import auth
-        auth.ALLOWED_USERS = ["test@example.com"]
+        auth.ALLOWED_USERS = ["javaisforever@gmail.com"]
         
-        # Create mock credentials
-        import jwt
-        token = jwt.encode(
-            {"email": "test@example.com", "sub": "test_123"},
+        # Create mock credentials (session-level mock from conftest will handle JWKS)
+        import jwt as pyjwt
+        token = pyjwt.encode(
+            {"email": "javaisforever@gmail.com", "sub": "test_123"},
             "secret",
             algorithm="HS256"
         )
@@ -245,21 +216,22 @@ class TestGetCurrentUser:
         from fastapi.security import HTTPAuthorizationCredentials
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
         
-        user_email = await get_current_user(credentials)
+        # Session-level mock from conftest.py handles PyJWKClient and jwt.decode
+        # No need for local mocks - they conflict with session fixture
+        user_email = await get_current_user(credentials, x_end_user_id=None)
         
-        assert user_email == "test@example.com"
+        assert user_email == "javaisforever@gmail.com"
     
     @pytest.mark.asyncio
     async def test_get_current_user_unauthorized(self, monkeypatch):
         """Test unauthorized user (not in whitelist)"""
-        monkeypatch.setenv("AUDIENCE", "")
         monkeypatch.setenv("ALLOWED_USERS", "admin@example.com")
         
         from src import auth
         auth.ALLOWED_USERS = ["admin@example.com"]
         
-        import jwt
-        token = jwt.encode(
+        import jwt as pyjwt
+        token = pyjwt.encode(
             {"email": "hacker@evil.com", "sub": "hacker_123"},
             "secret",
             algorithm="HS256"
@@ -268,6 +240,7 @@ class TestGetCurrentUser:
         from fastapi.security import HTTPAuthorizationCredentials
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
         
+        # Session-level mock from conftest.py handles PyJWKClient and jwt.decode
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(credentials)
         
@@ -276,7 +249,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_get_current_user_invalid_token(self, monkeypatch):
         """Test invalid token format"""
-        monkeypatch.setenv("AUDIENCE", "")
+        monkeypatch.setenv("AUDIENCE", "test-client-id.apps.googleusercontent.com")
         
         import importlib
         from src import auth
