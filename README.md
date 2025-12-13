@@ -11,7 +11,7 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
 - **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
-- **Comprehensive testing**: 122 tests (29 unit filter parser, 64 unit models/utils, 29 e2e with metadata filtering)
+- **Comprehensive testing**: 123 tests (29 unit filter parser, 64 unit models/utils, 30 e2e with metadata filtering + security)
 
 ## Architecture
 
@@ -48,9 +48,12 @@ filename                  │       embedding (VECTOR(768))│
 file_type                 │       chunk_index           │
 file_size                 │       created_at            │
 file_hash (SHA256) UNIQUE │                             │
-metadata                  │       CASCADE DELETE ◄──────┘
-chunk_count               │
-uploaded_at               │
+uploaded_by (TEXT)        │       CASCADE DELETE ◄──────┘
+uploaded_at (TIMESTAMP)   │
+uploaded_via (TEXT)       │
+metadata (JSONB)          │  ← User-defined fields only
+chunk_count               │     (department, tags, priority, etc.)
+                          │     System fields are columns
                           │
                           └── UNIQUE, globally unique identifier
 ```
@@ -351,6 +354,21 @@ curl -X POST http://localhost:8080/v1/query \
 - Data attribution: All operations tagged with user email
 - Service accounts can act on behalf of users via `X-End-User-ID` header
 
+**Protected Metadata Fields:**
+System-managed fields that cannot be overridden by user metadata uploads:
+- **System tracking:** `uploaded_by`, `uploaded_at`, `uploaded_via`
+- **Document identification:** `doc_id`, `doc_uuid`, `filename`, `original_filename`
+- **File properties:** `file_type`, `file_size`, `file_hash`, `chunk_count`
+- **Timestamps:** `created_at`, `updated_at`, `deleted_at`
+- **Versioning:** `version`
+
+Attempting to upload metadata with protected field names returns HTTP 400 error with clear explanation.
+
+**Metadata Architecture:**
+- **Database columns:** System fields (`uploaded_by`, `uploaded_at`, `uploaded_via`) stored as dedicated columns
+- **JSONB metadata:** User-defined fields only (`department`, `tags`, `priority`, custom fields)
+- **Filter transparency:** Single filter syntax works for both column and metadata fields
+
 **Setup:**
 - OAuth2 Client in Google Cloud Console
 - `scripts/get_user_token.py` for local testing
@@ -460,14 +478,15 @@ Query RAG system with natural language, relevance filtering, and metadata filter
   - **0.7** = strict filter (only highly relevant results)
 - `filters` (dict, optional): MongoDB-style metadata filters for multi-tenant isolation and categorization
   - **Supported operators:** `$and`, `$or`, `$not`, `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$all`, `$exists`
-  - Simple equality: `{"user_id": "user123"}`
+  - **Works transparently:** Same syntax for both database columns (`uploaded_by`, `filename`) and JSONB metadata (`department`, `tags`)
+  - Simple equality: `{"uploaded_by": "alice@company.com"}` or `{"department": "engineering"}`
   - Array matching: `{"tags": {"$in": ["finance", "legal"]}}`
-  - Complex logic: `{"$and": [{"user_id": "user123"}, {"$not": {"status": "archived"}}]}`
+  - Complex logic: `{"$and": [{"uploaded_by": "user123"}, {"$not": {"status": "archived"}}]}`
 
 **Metadata filtering benefits:**
-- **Multi-tenant isolation:** Filter by `user_id` to show only user's documents
+- **Multi-tenant isolation:** Filter by `uploaded_by` to show only specific user's documents
 - **Document categorization:** Filter by tags, departments, status, etc.
-- **Time-based filtering:** Filter by `created_at`, `uploaded_at`
+- **Time-based filtering:** Filter by `uploaded_at`, `created_at`
 - **Custom business logic:** Combine multiple conditions with AND/OR/NOT
 
 **Why use similarity threshold:**

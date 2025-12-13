@@ -299,8 +299,10 @@ class DocumentInfo(BaseModel):
     file_size: int
     file_hash: str = Field(..., description="SHA256 hash of file content (64 hex chars)")
     chunk_count: int
-    uploaded_at: str
-    metadata: dict = Field(default_factory=dict, description="Document metadata (system + user fields)")
+    uploaded_by: str = Field(..., description="User email who uploaded the document")
+    uploaded_at: str = Field(..., description="Upload timestamp (ISO 8601)")
+    uploaded_via: str = Field(default="api", description="Upload source (api, cli, etc.)")
+    metadata: dict = Field(default_factory=dict, description="User-defined metadata only (department, tags, priority, etc.)")
 
 
 class DocumentListResponse(BaseModel):
@@ -472,35 +474,41 @@ async def upload_document(
                     detail=f"Invalid metadata JSON: {str(e)}"
                 )
         
-        # SECURITY: System metadata fields are protected - user cannot override them
-        # Define protected system fields that user cannot set
+        # SECURITY: Protected fields - user cannot set these in metadata
+        # Includes all system fields AND database column names to prevent conflicts
         PROTECTED_FIELDS = {
-            "uploaded_by", "uploaded_at", "uploaded_via", "original_filename",
-            # Future system fields should be added here:
-            # "verified_at", "is_sensitive", "access_level", etc.
+            # System fields (stored as columns):
+            "uploaded_by", "uploaded_at", "uploaded_via",
+            # Database columns (prevent metadata conflicts):
+            "doc_id", "doc_uuid", "filename", "file_type", "file_size", 
+            "file_hash", "chunk_count", "original_filename",
+            # Reserved for future use:
+            "created_at", "updated_at", "deleted_at", "version",
         }
         
-        # Filter out any protected fields from user metadata (prevent impersonation)
-        filtered_metadata = {
-            k: v for k, v in custom_metadata.items() 
-            if k not in PROTECTED_FIELDS
-        }
+        # Check for protected field names in user metadata
+        forbidden_fields = set(custom_metadata.keys()) & PROTECTED_FIELDS
+        if forbidden_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Metadata contains protected field names: {sorted(forbidden_fields)}. "
+                       f"Protected fields: {sorted(PROTECTED_FIELDS)}. "
+                       f"These are reserved for system use or database columns."
+            )
         
-        # Merge filtered user metadata with system metadata (system fields always win)
-        doc_metadata = {
-            **filtered_metadata,  # User-provided fields (filtered)
-            "original_filename": file.filename,
-            "uploaded_by": user_email,
-            "uploaded_at": datetime.utcnow().isoformat(),
-            "uploaded_via": "api",
-        }
+        # All user metadata is valid
+        filtered_metadata = custom_metadata
         
+        # System fields stored as columns, user metadata stored as JSONB
         doc_id, doc_uuid = await vector_db.insert_original_document(
             filename=file.filename,
             file_type=content_type,
             file_size=len(file_content),
             file_hash=file_hash,
-            metadata=doc_metadata
+            uploaded_by=user_email,
+            uploaded_at=datetime.utcnow(),
+            uploaded_via="api",
+            metadata=filtered_metadata,  # Only user-defined fields
         )
         logger.info(f"Created document record: ID={doc_id}, UUID={doc_uuid}, user={user_email}, metadata={list(custom_metadata.keys())}")
         
@@ -981,7 +989,7 @@ async def list_documents():
             rows = await conn.fetch("""
                 SELECT 
                     id, doc_uuid, filename, file_type, file_size, file_hash,
-                    chunk_count, uploaded_at, metadata
+                    chunk_count, uploaded_by, uploaded_at, uploaded_via, metadata
                 FROM original_documents
                 ORDER BY uploaded_at DESC
             """)
@@ -995,7 +1003,9 @@ async def list_documents():
                 file_size=row["file_size"],
                 file_hash=row["file_hash"],
                 chunk_count=row["chunk_count"],
+                uploaded_by=row["uploaded_by"],
                 uploaded_at=row["uploaded_at"].isoformat(),
+                uploaded_via=row["uploaded_via"],
                 metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else (row["metadata"] or {}),
             )
             for row in rows
@@ -1010,6 +1020,58 @@ async def list_documents():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list documents: {str(e)}",
+        )
+
+
+@app.get("/v1/documents/{doc_id}", response_model=DocumentInfo)
+async def get_document(doc_id: int):
+    """
+    Get document metadata by ID
+    
+    Returns detailed information about a specific document.
+    
+    Example:
+        GET /v1/documents/123
+    """
+    try:
+        async with vector_db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT 
+                    id, doc_uuid, filename, file_type, file_size, file_hash,
+                    chunk_count, uploaded_by, uploaded_at, uploaded_via, metadata
+                FROM original_documents
+                WHERE id = $1
+                """,
+                doc_id
+            )
+        
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document {doc_id} not found",
+            )
+        
+        return DocumentInfo(
+            doc_id=row["id"],
+            doc_uuid=str(row["doc_uuid"]),
+            filename=row["filename"],
+            file_type=row["file_type"],
+            file_size=row["file_size"],
+            file_hash=row["file_hash"],
+            chunk_count=row["chunk_count"],
+            uploaded_by=row["uploaded_by"],
+            uploaded_at=row["uploaded_at"].isoformat(),
+            uploaded_via=row["uploaded_via"],
+            metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else (row["metadata"] or {}),
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get document: {str(e)}",
         )
 
 

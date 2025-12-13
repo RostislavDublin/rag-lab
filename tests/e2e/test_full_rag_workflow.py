@@ -76,6 +76,7 @@ def test_documents():
         "xml": fixtures_dir / "gdpr_compliance.xml",  # Topic: Legal, GDPR, compliance
         "csv": fixtures_dir / "financial_quarterly_report.csv",  # Topic: Financial reports
         "log": fixtures_dir / "rag_system_operations.log",  # Topic: System operations, logs
+        "security": fixtures_dir / "security_test.txt",  # Topic: Security test (protected fields)
     }
     
     # Calculate hashes for selective cleanup (preserves user documents)
@@ -88,6 +89,7 @@ def test_documents():
     docs["xml_hash"] = calculate_file_hash(docs["xml"])
     docs["csv_hash"] = calculate_file_hash(docs["csv"])
     docs["log_hash"] = calculate_file_hash(docs["log"])
+    docs["security_hash"] = calculate_file_hash(docs["security"])
     
     return docs
 
@@ -99,7 +101,7 @@ def cleanup_test_documents(request, test_documents, auth_headers):
     
     # Delete test documents by hash (if they exist from previous run)
     deleted_before = 0
-    for hash_key in ["txt_hash", "pdf_hash", "md_hash", "json_hash", "html_hash", "yaml_hash", "xml_hash", "csv_hash", "log_hash"]:
+    for hash_key in ["txt_hash", "pdf_hash", "md_hash", "json_hash", "html_hash", "yaml_hash", "xml_hash", "csv_hash", "log_hash", "security_hash"]:
         file_hash = test_documents[hash_key]
         response = requests.delete(f"{API_BASE}/v1/documents/by-hash/{file_hash}", headers=auth_headers, timeout=30)
         if response.status_code == 200:
@@ -118,7 +120,7 @@ def cleanup_test_documents(request, test_documents, auth_headers):
     if not request.config.getoption("--no-cleanup"):
         print("\n🧹 Cleaning up test documents after tests...")
         deleted_after = 0
-        for hash_key in ["txt_hash", "pdf_hash", "md_hash", "json_hash", "html_hash", "yaml_hash", "xml_hash", "csv_hash", "log_hash"]:
+        for hash_key in ["txt_hash", "pdf_hash", "md_hash", "json_hash", "html_hash", "yaml_hash", "xml_hash", "csv_hash", "log_hash", "security_hash"]:
             file_hash = test_documents[hash_key]
             response = requests.delete(f"{API_BASE}/v1/documents/by-hash/{file_hash}", headers=auth_headers, timeout=30)
             if response.status_code == 200:
@@ -271,11 +273,11 @@ def test_03c2_security_protected_metadata_fields(test_documents, auth_headers):
     """Step 3c2: SECURITY - User cannot override protected system metadata fields"""
     print("\n=== Step 3c2: SECURITY TEST - Protected metadata fields ===")
     
-    txt_path = test_documents["txt"]
-    assert txt_path.exists(), f"Test file not found: {txt_path}"
+    security_path = test_documents["security"]
+    assert security_path.exists(), f"Test file not found: {security_path}"
     
     # Attacker tries to impersonate another user and manipulate timestamps
-    # These fields should be IGNORED and system values used instead
+    # These fields should be REJECTED (400 error) not silently filtered
     malicious_metadata = json.dumps({
         "uploaded_by": "admin@company.com",  # ATTACK: impersonation
         "uploaded_at": "2020-01-01T00:00:00",  # ATTACK: fake timestamp
@@ -284,72 +286,67 @@ def test_03c2_security_protected_metadata_fields(test_documents, auth_headers):
         "department": "security",  # LEGITIMATE: user field
     })
     
-    with open(txt_path, "rb") as f:
-        files = {"file": (txt_path.name, f, "text/plain")}
+    with open(security_path, "rb") as f:
+        files = {"file": (security_path.name, f, "text/plain")}
         data = {"metadata": malicious_metadata}
         response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, data=data, headers=auth_headers, timeout=60)
     
-    assert response.status_code == 200, f"Upload failed: {response.text}"
+    # SECURITY VERIFICATION: Upload MUST be REJECTED with 400 error
+    assert response.status_code == 400, f"Expected 400 error, got {response.status_code}: {response.text}"
+    
+    error_detail = response.json()["detail"]
+    assert "protected field names" in error_detail.lower(), f"Error should mention protected fields: {error_detail}"
+    assert "uploaded_by" in error_detail, "Error should list 'uploaded_by' as protected"
+    assert "uploaded_at" in error_detail, "Error should list 'uploaded_at' as protected"
+    assert "uploaded_via" in error_detail, "Error should list 'uploaded_via' as protected"
+    
+    print(f"✓ SECURITY VERIFIED: Upload rejected with 400 error")
+    print(f"  - Error: {error_detail[:100]}...")
+    
+    # Now test that upload WITHOUT protected fields succeeds
+    print(f"\n  Testing legitimate upload (no protected fields)...")
+    legitimate_metadata = json.dumps({
+        "department": "security",  # LEGITIMATE: user field
+        "tags": ["test", "security"],
+    })
+    
+    with open(security_path, "rb") as f:
+        files = {"file": (security_path.name, f, "text/plain")}
+        data = {"metadata": legitimate_metadata}
+        response = requests.post(f"{API_BASE}/v1/documents/upload", files=files, data=data, headers=auth_headers, timeout=60)
+    
+    assert response.status_code == 200, f"Legitimate upload failed: {response.text}"
     result = response.json()
+    doc_id = result["doc_id"]
     
-    # Handle deduplication case - if file already uploaded, get doc_id from message
-    if result["chunks_created"] == 0:
-        # Document was deduplicated - still valid for security test
-        print(f"✓ Document deduplicated (already exists): {result['filename']}")
-        doc_id = result["doc_id"]
-    else:
-        doc_id = result["doc_id"]
-        print(f"✓ Uploaded with malicious metadata: {result['filename']}")
-    
-    print(f"  - ID: {doc_id}")
-    
-    # SECURITY VERIFICATION: Query the document metadata via API
-    # Protected fields should have REAL values, not attacker-provided values
-    # This test verifies that FIRST upload had protected fields, not the deduplicated one
+    # Verify system fields are auto-populated correctly
     response = requests.get(f"{API_BASE}/v1/documents", headers=auth_headers, timeout=30)
-    assert response.status_code == 200, f"GET /documents failed: {response.text}"
+    assert response.status_code == 200
     
     documents = response.json()["documents"]
     doc = next((d for d in documents if d["doc_id"] == doc_id), None)
-    assert doc is not None, f"Document {doc_id} not found in list"
+    assert doc is not None, f"Document {doc_id} not found"
     
+    # Check system fields at top level
+    assert doc["uploaded_by"] == "javaisforever@gmail.com", "uploaded_by should be from JWT"
+    assert doc["uploaded_at"].startswith("2025"), "uploaded_at should be current timestamp"
+    assert doc["uploaded_via"] == "api", "uploaded_via should be 'api'"
+    
+    # Check metadata does NOT contain protected fields
     metadata = doc["metadata"]
+    assert "uploaded_by" not in metadata, "metadata should not contain uploaded_by"
+    assert "uploaded_at" not in metadata, "metadata should not contain uploaded_at"
+    assert "uploaded_via" not in metadata, "metadata should not contain uploaded_via"
     
-    # SECURITY ASSERTIONS: System fields must NOT contain attacker values
-    assert metadata["uploaded_by"] != "admin@company.com", \
-        "SECURITY BREACH: uploaded_by was overridden by user input"
-    # NOTE: Could be alice@company.com (first upload) or javaisforever@gmail.com (JWT)
-    # The key is it's NOT the attacker's fake value "admin@company.com"
-    assert metadata["uploaded_by"] in ["javaisforever@gmail.com", "alice@company.com"], \
-        f"uploaded_by should be real user (JWT or first uploader), got: {metadata['uploaded_by']}"
+    # Check legitimate user fields are preserved
+    assert metadata.get("department") == "security", "User field should be preserved"
+    assert "test" in metadata.get("tags", []), "User field should be preserved"
     
-    assert metadata["uploaded_at"] != "2020-01-01T00:00:00", \
-        "SECURITY BREACH: uploaded_at was overridden by user input"
-    assert metadata["uploaded_at"].startswith("2025"), \
-        f"uploaded_at should be current timestamp, got: {metadata['uploaded_at']}"
-    
-    assert metadata["uploaded_via"] != "trusted_service", \
-        "SECURITY BREACH: uploaded_via was overridden by user input"
-    assert metadata["uploaded_via"] == "api", \
-        f"uploaded_via should be 'api', got: {metadata['uploaded_via']}"
-    
-    assert metadata["original_filename"] != "secret.pdf", \
-        "SECURITY BREACH: original_filename was overridden by user input"
-    assert metadata["original_filename"] == txt_path.name, \
-        f"original_filename should be real filename, got: {metadata['original_filename']}"
-    
-    # LEGITIMATE field should be preserved
-    # NOTE: If deduplicated, will have metadata from FIRST upload (alice: engineering)
-    # If new upload, will have metadata from THIS upload (security)
-    assert metadata.get("department") in ["engineering", "security"], \
-        f"Legitimate user field should be preserved, got: {metadata.get('department')}"
-    
-    print(f"✓ SECURITY VERIFIED:")
-    print(f"  - uploaded_by: {metadata['uploaded_by']} (real JWT user, not 'admin@company.com')")
-    print(f"  - uploaded_at: {metadata['uploaded_at'][:19]} (real timestamp, not '2020-01-01')")
-    print(f"  - uploaded_via: {metadata['uploaded_via']} (real source, not 'trusted_service')")
-    print(f"  - original_filename: {metadata['original_filename']} (real file, not 'secret.pdf')")
-    print(f"  - department: {metadata.get('department')} (legitimate user field: engineering from first upload or security from this upload)")
+    print(f"✓ Legitimate upload succeeded")
+    print(f"  - uploaded_by: {doc['uploaded_by']} (from JWT)")
+    print(f"  - uploaded_at: {doc['uploaded_at'][:19]}")
+    print(f"  - uploaded_via: {doc['uploaded_via']}")
+    print(f"  - metadata: {metadata} (no protected fields)")
     print(f"  ✓ Protected fields CANNOT be overridden by user input")
 
 

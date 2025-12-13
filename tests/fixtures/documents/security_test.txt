@@ -1,0 +1,18 @@
+SECURITY TEST FILE
+
+This file is used exclusively for testing protected metadata fields security.
+
+The test verifies that users CANNOT override system-protected fields like:
+- uploaded_by (user identity from JWT)
+- uploaded_at (timestamp)
+- uploaded_via (source: api, cli, etc)
+- original_filename (real filename)
+
+Any attempt to provide these fields in metadata should result in HTTP 400 error.
+
+This prevents security attacks:
+- User impersonation (fake uploaded_by)
+- Timestamp manipulation (fake uploaded_at)
+- Audit trail bypass (fake uploaded_via)
+
+This file should ONLY be used in test_03c2_security_protected_metadata_fields.

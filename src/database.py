@@ -72,8 +72,11 @@ class VectorDB:
                     file_size INTEGER,
                     file_hash TEXT UNIQUE NOT NULL,
                     chunk_count INTEGER DEFAULT 0,
+                    uploaded_by TEXT NOT NULL,
+                    uploaded_at TIMESTAMP NOT NULL,
+                    uploaded_via TEXT DEFAULT 'api',
                     metadata JSONB DEFAULT '{}',
-                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
@@ -135,10 +138,23 @@ class VectorDB:
         file_type: str,
         file_size: int,
         file_hash: str,
+        uploaded_by: str,
+        uploaded_at,  # datetime object
+        uploaded_via: str = "api",
         metadata: Optional[dict] = None,
     ) -> Tuple[int, str]:
         """
         Insert original document metadata (files stored in GCS)
+        
+        Args:
+            filename: Original filename
+            file_type: MIME type
+            file_size: Size in bytes
+            file_hash: SHA256 hash for deduplication
+            uploaded_by: User email (from JWT)
+            uploaded_at: Upload timestamp
+            uploaded_via: Upload source (api, cli, etc.)
+            metadata: User-defined metadata only (no system fields)
         
         Returns:
             Tuple of (document_id, doc_uuid)
@@ -147,14 +163,18 @@ class VectorDB:
             row = await conn.fetchrow(
                 """
                 INSERT INTO original_documents 
-                    (filename, file_type, file_size, file_hash, metadata)
-                VALUES ($1, $2, $3, $4, $5)
+                    (filename, file_type, file_size, file_hash, 
+                     uploaded_by, uploaded_at, uploaded_via, metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING id, doc_uuid
                 """,
                 filename,
                 file_type,
                 file_size,
                 file_hash,
+                uploaded_by,
+                uploaded_at,
+                uploaded_via,
                 json.dumps(metadata) if metadata else json.dumps({}),
             )
             return row["id"], str(row["doc_uuid"])
