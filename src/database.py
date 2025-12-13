@@ -8,11 +8,14 @@ Multi-cloud portable - works on GCP Cloud SQL, AWS RDS, Azure Database for Postg
 import hashlib
 import hashlib
 import json
+import logging
 import os
 from typing import List, Optional, Tuple
 
 import asyncpg
 from pgvector.asyncpg import register_vector
+
+logger = logging.getLogger(__name__)
 
 
 class VectorDB:
@@ -45,13 +48,13 @@ class VectorDB:
         async with self.pool.acquire() as conn:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         
-        print(f"Connected to PostgreSQL: {self.connection_string.split('@')[1]}")
+        logger.info(f"Connected to PostgreSQL: {self.connection_string.split('@')[1]}")
     
     async def disconnect(self):
         """Close connection pool"""
         if self.pool:
             await self.pool.close()
-            print("Disconnected from PostgreSQL")
+            logger.info("Disconnected from PostgreSQL")
     
     async def init_schema(self):
         """Create tables and indexes"""
@@ -93,7 +96,7 @@ class VectorDB:
                 USING hnsw (embedding vector_cosine_ops)
             """)
             
-            print("Database schema initialized (GCS + UUID architecture)")
+            logger.info("Database schema initialized (GCS + UUID architecture)")
     
     async def check_document_exists(self, file_hash: str) -> Optional[Tuple[int, str, str]]:
         """

@@ -20,9 +20,18 @@ gs://bucket/
 
 import asyncio
 import json
+import logging
+import os
 from typing import List, Optional
 
 from google.cloud import storage
+
+logger = logging.getLogger(__name__)
+
+# Connection pool size for GCS operations (controls concurrent operations only)
+# Default: 10 to match urllib3's default connection pool size
+# Increase only if you configure urllib3 pool size higher
+GCS_CONNECTION_POOL_SIZE = int(os.getenv("GCS_CONNECTION_POOL_SIZE", "10"))
 
 
 class DocumentStorage:
@@ -35,6 +44,7 @@ class DocumentStorage:
         Args:
             bucket_name: GCS bucket name (must be in same region as Cloud Run)
         """
+        # Use standard GCS client (urllib3 pool configured via env vars)
         self.client = storage.Client()
         self.bucket = self.client.bucket(bucket_name)
         self.bucket_name = bucket_name
@@ -96,8 +106,12 @@ class DocumentStorage:
                 content_type="application/json"
             ))
         
-        # Execute all uploads in parallel
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Execute uploads with concurrency limit to avoid connection pool exhaustion
+        results = []
+        for i in range(0, len(tasks), GCS_CONNECTION_POOL_SIZE):
+            batch = tasks[i:i + GCS_CONNECTION_POOL_SIZE]
+            batch_results = await asyncio.gather(*batch, return_exceptions=True)
+            results.extend(batch_results)
         
         # Check for failures
         errors = [r for r in results if isinstance(r, Exception)]
@@ -141,10 +155,14 @@ class DocumentStorage:
             except Exception as e:
                 raise Exception(f"Failed to fetch chunk {index} for {doc_uuid}: {e}")
         
-        # Fetch all chunks in parallel
-        return await asyncio.gather(*[
-            fetch_one(idx) for idx in chunk_indices
-        ])
+        # Fetch chunks with concurrency limit
+        results = []
+        for i in range(0, len(chunk_indices), GCS_CONNECTION_POOL_SIZE):
+            batch = chunk_indices[i:i + GCS_CONNECTION_POOL_SIZE]
+            batch_results = await asyncio.gather(*[fetch_one(idx) for idx in batch])
+            results.extend(batch_results)
+        
+        return results
     
     async def fetch_chunks_with_metadata(self, doc_uuid: str, chunk_indices: List[int]) -> List[dict]:
         """
@@ -179,10 +197,14 @@ class DocumentStorage:
             except Exception as e:
                 raise Exception(f"Failed to fetch chunk {index} for {doc_uuid}: {e}")
         
-        # Fetch all chunks in parallel
-        return await asyncio.gather(*[
-            fetch_one(idx) for idx in chunk_indices
-        ])
+        # Fetch chunks with concurrency limit
+        results = []
+        for i in range(0, len(chunk_indices), GCS_CONNECTION_POOL_SIZE):
+            batch = chunk_indices[i:i + GCS_CONNECTION_POOL_SIZE]
+            batch_results = await asyncio.gather(*[fetch_one(idx) for idx in batch])
+            results.extend(batch_results)
+        
+        return results
     
     async def fetch_extracted_text(self, doc_uuid: str) -> str:
         """Fetch extracted text from GCS"""
@@ -231,17 +253,19 @@ class DocumentStorage:
             # No files found - might be already deleted or never uploaded
             return
         
-        # Delete all in parallel with error tolerance
-        tasks = [
-            asyncio.to_thread(blob.delete)
-            for blob in blobs
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Delete in batches with concurrency limit
+        results = []
+        for i in range(0, len(blobs), GCS_CONNECTION_POOL_SIZE):
+            batch = blobs[i:i + GCS_CONNECTION_POOL_SIZE]
+            batch_results = await asyncio.gather(*[
+                asyncio.to_thread(blob.delete) for blob in batch
+            ], return_exceptions=True)
+            results.extend(batch_results)
         
         # Log errors but don't fail
         errors = [r for r in results if isinstance(r, Exception)]
         if errors:
-            print(f"Warning: {len(errors)} files failed to delete for {doc_uuid}")
+            logger.warning(f"{len(errors)} files failed to delete for {doc_uuid}")
     
     async def _upload(
         self,

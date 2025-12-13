@@ -16,6 +16,7 @@ Architecture decision:
 import os
 import warnings
 import asyncio
+import logging
 from typing import List, Tuple, Optional
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +26,10 @@ import html2text  # HTML to Markdown conversion
 
 from google import genai
 from google.genai.types import EmbedContentConfig
+
+# Setup logging
+logger = logging.getLogger(__name__)
+# To enable detailed TRACE-level logging: logging.getLogger('src.document_processor').setLevel(logging.DEBUG)
 
 
 class EmbeddingProvider(Enum):
@@ -84,11 +89,16 @@ class DocumentProcessor:
             # For bytes, we need to create a PyMuPDF Document first
             import pymupdf
             doc = pymupdf.open(stream=pdf_source, filetype="pdf")
+            page_count = len(doc)
+            logger.debug(f"PDF has {page_count} pages, extracting text...")
             markdown_text = pymupdf4llm.to_markdown(doc)
             doc.close()
+            logger.debug(f"Extracted {len(markdown_text)} chars from PDF")
         else:
             # For file path, pymupdf4llm handles it directly
+            logger.debug(f"Extracting text from PDF file...")
             markdown_text = pymupdf4llm.to_markdown(pdf_source)
+            logger.debug(f"Extracted {len(markdown_text)} chars from PDF")
         
         return markdown_text
     
@@ -108,7 +118,7 @@ class DocumentProcessor:
                 return txt_source.decode('utf-8')
             except UnicodeDecodeError:
                 # Fallback to latin-1 (never fails)
-                print(f"Warning: UTF-8 decode failed, using latin-1")
+                logger.warning(f"UTF-8 decode failed, using latin-1")
                 return txt_source.decode('latin-1', errors='replace')
         else:
             with open(txt_source, 'r', encoding='utf-8', errors='replace') as f:
@@ -292,42 +302,47 @@ class DocumentProcessor:
         Returns:
             List of (chunk_text, metadata) tuples
         """
-        print(f"Chunking text ({len(text)} chars, chunk_size={self.chunk_size}, overlap={self.chunk_overlap})...")
+        logger.info(f"Chunking text: {len(text)} chars, chunk_size={self.chunk_size}, overlap={self.chunk_overlap}")
         
         # Simple character-based chunking
         # TODO: Implement smarter sentence-aware chunking
         
         chunks = []
         start = 0
+        iteration = 0
         
         while start < len(text):
+            iteration += 1
+            if iteration % 10 == 0:  # Log every 10 chunks
+                logger.debug(f"Chunking progress: {len(chunks)} chunks, position {start}/{len(text)}")
             end = start + self.chunk_size
             chunk = text[start:end]
             
             # Try to find good boundaries in order of preference:
-            # 1. Double newline (paragraph boundary)
-            # 2. Single newline (line boundary)
-            # 3. Period followed by space (sentence boundary)
-            # 4. Space (word boundary)
-            # 5. Take full chunk_size (for code/JSON/continuous text)
+            # Search in the LAST 20% of chunk to keep chunks close to target size
+            # Instead of searching from start (which creates tiny chunks)
             
             if end < len(text):
+                # Search for boundary in last 20% of chunk (e.g., last 400 chars of 2000)
+                search_start = max(0, self.chunk_size - int(self.chunk_size * 0.2))
+                search_region = chunk[search_start:]
+                
                 boundaries = [
-                    chunk.rfind('\n\n'),      # Paragraph
-                    chunk.rfind('\n'),        # Line
-                    chunk.rfind('. '),        # Sentence (period + space, not just period)
-                    chunk.rfind(' '),         # Word
+                    search_region.rfind('\n\n'),      # Paragraph
+                    search_region.rfind('\n'),        # Line
+                    search_region.rfind('. '),        # Sentence (period + space)
+                    search_region.rfind(' '),         # Word
                 ]
                 
-                # Use first boundary that's far enough from start (min 100 chars)
+                # Use first boundary found in the search region
                 best_boundary = -1
                 for boundary in boundaries:
-                    if boundary > 100:
-                        best_boundary = boundary
+                    if boundary > 0:  # Found in search region
+                        best_boundary = search_start + boundary
                         break
                 
                 if best_boundary > 0:
-                    # +1 to include the separator character
+                    # Adjust end to boundary position
                     if chunk[best_boundary:best_boundary+2] in ['\n\n', '. ']:
                         end = start + best_boundary + 2
                     else:
@@ -343,10 +358,15 @@ class DocumentProcessor:
                 }
             ))
             
+            # Log chunk size (DEBUG level for detailed trace)
+            chunk_size_actual = end - start
+            logger.debug(f"Chunk #{len(chunks)}: {chunk_size_actual} chars")
+            
             # Move start position with overlap
+            # With proper boundary detection in last 20%, overlap should work correctly
             start = end - self.chunk_overlap
         
-        print(f"Created {len(chunks)} chunks")
+        logger.info(f"Created {len(chunks)} chunks")
         return chunks
     
     async def generate_embeddings(self, texts: List[str]) -> tuple[List[tuple[str, List[float]]], dict]:
@@ -388,7 +408,7 @@ class DocumentProcessor:
             Tuple of (list of (text, embedding) pairs, stats dict)
             Note: May return MORE pairs than input if chunks split
         """
-        print(f"Generating embeddings for {len(texts)} chunks (max {max_workers} parallel)...")
+        logger.info(f"Generating embeddings for {len(texts)} chunks (max {max_workers} parallel)")
         
         # Track statistics
         stats = {"splits_performed": 0, "max_depth_reached": 0}
@@ -432,8 +452,8 @@ class DocumentProcessor:
                     stats["splits_performed"] += 1
                     stats["max_depth_reached"] = max(stats["max_depth_reached"], depth + 1)
                     
-                    print(f"  ⚠️  Chunk too large ({len(text)} chars), splitting in half (depth={depth})...")
-                    print(f"      Split #{stats['splits_performed']}: {len(text)} chars → 2 sub-chunks")
+                    logger.debug(f"Chunk too large ({len(text)} chars), splitting (depth={depth})")
+                    logger.debug(f"Split #{stats['splits_performed']}: {len(text)} chars → 2 sub-chunks")
                     
                     # Split chunk in half at nearest semantic boundary
                     mid = len(text) // 2
@@ -458,13 +478,13 @@ class DocumentProcessor:
                     chunk2_start = max(0, split_point - overlap)
                     chunk2 = text[chunk2_start:].strip()
                     
-                    print(f"      Split with {overlap} char overlap for continuity")
+                    logger.debug(f"Split with {overlap} char overlap for continuity")
                     
                     pairs1 = _get_embedding_with_retry(chunk1, depth + 1)
                     pairs2 = _get_embedding_with_retry(chunk2, depth + 1)
                     
                     # Return BOTH chunks as separate items
-                    print(f"  ✓ Created {len(pairs1) + len(pairs2)} sub-chunks from split #{stats['splits_performed']}")
+                    logger.debug(f"Created {len(pairs1) + len(pairs2)} sub-chunks from split #{stats['splits_performed']}")
                     return pairs1 + pairs2
                 else:
                     # Not a token error - re-raise
@@ -487,11 +507,11 @@ class DocumentProcessor:
                 for pairs in results:
                     all_pairs.extend(pairs)
                 
-                print(f"✓ Generated {len(all_pairs)} embeddings successfully (from {len(texts)} original chunks)")
+                logger.info(f"Generated {len(all_pairs)} embeddings (from {len(texts)} original chunks)")
                 if stats["splits_performed"] > 0:
-                    print(f"   📊 Splits performed: {stats['splits_performed']}, Max depth: {stats['max_depth_reached']}")
+                    logger.info(f"Splits performed: {stats['splits_performed']}, max depth: {stats['max_depth_reached']}")
             except asyncio.TimeoutError:
-                print(f"✗ Timeout generating embeddings after 120s")
+                logger.error(f"Timeout generating embeddings after 120s")
                 raise TimeoutError("Embedding generation timeout (120s)")
         
         return all_pairs, stats
@@ -521,11 +541,14 @@ class DocumentProcessor:
         
         # Chunk text
         chunks = self.chunk_text(text)
+        logger.debug(f"Prepared {len(chunks)} chunks for embedding")
         
         # Generate embeddings (parallel processing)
         # Returns list of (text, embedding) pairs - may be MORE than len(chunks) if splits occurred
         chunk_texts = [chunk[0] for chunk in chunks]
+        logger.debug(f"Calling generate_embeddings() for {len(chunk_texts)} chunks")
         pairs, embedding_stats = await self.generate_embeddings(chunk_texts)
+        logger.debug(f"Embeddings generated: {len(pairs)} pairs")
         
         # Combine with metadata
         # Note: We need to re-index because splits may have created extra chunks

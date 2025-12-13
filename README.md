@@ -652,8 +652,44 @@ python teardown.py
 - `GCP_LOCATION`: Vertex AI region (default: us-central1)
 - `PORT`: Server port (default: 8080)
 - `GOOGLE_APPLICATION_CREDENTIALS`: Path to service account key
+- `LOG_LEVEL`: Logging level - DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
+- `GCS_CONNECTION_POOL_SIZE`: Max concurrent GCS operations (default: 10, must match urllib3 pool size)
 
 **CRITICAL:** Deploy Cloud Run and GCS bucket in **same region** (e.g., us-central1) for $0 egress costs
+
+### Logging
+
+The application uses Python's standard logging module with configurable levels:
+
+**Log Levels:**
+- `DEBUG`: Detailed trace (chunk sizes, file processing details)
+- `INFO`: Important operations (document processing, chunking summary, database connections)
+- `WARNING`: Recoverable issues (UTF-8 decode failures, GCS connection pool warnings)
+- `ERROR`: Failures requiring attention
+
+**Configuration:**
+```bash
+# In .env.local
+LOG_LEVEL=INFO  # Production default
+LOG_LEVEL=DEBUG # For troubleshooting
+```
+
+**Third-party library logs are suppressed** (httpx, google, urllib3, asyncio) to reduce noise - only WARNING and above are shown.
+
+**Example output (INFO level):**
+```
+2025-12-13 01:48:44 - src.main - INFO - Initializing Google Gen AI (project=myai-475419, location=us-central1)...
+2025-12-13 01:48:44 - src.main - INFO - Google Gen AI client initialized successfully
+2025-12-13 01:48:44 - src.database - INFO - Connected to PostgreSQL: localhost:5432/rag_db
+2025-12-13 01:48:44 - src.database - INFO - Database schema initialized (GCS + UUID architecture)
+2025-12-13 01:48:44 - src.main - INFO - Document processor initialized
+2025-12-13 01:48:45 - src.document_processor - INFO - Processing document: sample.pdf (pdf)
+2025-12-13 01:48:46 - src.document_processor - INFO - Chunking text (38566 chars) into chunks of 2000 chars with 200 overlap
+2025-12-13 01:48:46 - src.document_processor - INFO - Created 23 chunks from document
+2025-12-13 01:48:47 - src.main - INFO - Generated 23 chunks with embeddings
+2025-12-13 01:48:48 - src.main - INFO - Created document record: ID=42, UUID=a3b2c1d4-..., user=user@example.com
+2025-12-13 01:48:49 - src.main - INFO - Stored 23 embeddings for document sample.pdf
+```
 
 ### System Dependencies
 
@@ -921,6 +957,25 @@ Our chunking strategy balances **RAG quality** vs **API efficiency**:
   - Prevents information loss at boundaries
   - Improves retrieval when answer spans multiple chunks
 
+### Boundary Detection
+
+The chunking algorithm searches for natural boundaries in the **last 20%** of the target chunk size to maintain consistent chunk sizes while respecting document structure:
+
+```python
+# Search for natural boundaries in last 20% of target chunk size
+search_start = chunk_size - int(chunk_size * 0.2)  # Last 400 chars for 2000-char chunks
+search_region = chunk[search_start:]
+
+# Priority: paragraph > sentence > word > fallback to chunk_size
+boundaries = [
+    search_region.rfind('\n\n'),   # Paragraph break
+    search_region.rfind('. '),      # Sentence end
+    search_region.rfind(' ')        # Word boundary
+]
+```
+
+**Result:** Chunks sized 1600-2000 chars (80-100% of target), preserving semantic coherence.
+
 ### Retry Logic (Safety Net)
 
 While `text-embedding-005` supports up to **20,000 tokens** (our chunks are ~500), we include retry logic as defense-in-depth:
@@ -933,11 +988,11 @@ While `text-embedding-005` supports up to **20,000 tokens** (our chunks are ~500
 
 **Key invariant:** `#chunks = #embeddings` (always synchronized between GCS and PostgreSQL)
 
-### Performance Impact
+### Performance
 
-- **bug_too_many.txt** (26KB): 13 chunks (was 58 with old 500-char chunks)
-- **4.5x fewer API calls** with better context quality
-- Retry never triggers in practice (2000 chars << 20K token limit)
+- **Typical 25-page PDF** (~40KB text): ~20-25 chunks
+- **Processing time:** 2-3 seconds for extraction + chunking + embedding
+- **Chunk quality:** Consistent sizes maintain embedding quality across documents
 
 ## Project Structure
 

@@ -39,7 +39,7 @@ AUDIENCE = os.getenv("AUDIENCE", "")  # Client ID
 ALLOWED_USERS_STR = os.getenv("ALLOWED_USERS", "javaisforever@gmail.com")
 ALLOWED_USERS = [email.strip() for email in ALLOWED_USERS_STR.split(",") if email.strip()]
 
-print(f"Auth configured: {len(ALLOWED_USERS)} allowed users, JWKS={JWKS_URL}")
+logger.info(f"Auth configured: {len(ALLOWED_USERS)} allowed users, JWKS={JWKS_URL}")
 
 
 class AuthError(HTTPException):

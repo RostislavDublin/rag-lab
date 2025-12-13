@@ -14,6 +14,7 @@ Architecture:
 """
 
 import asyncio
+import logging
 import os
 import warnings
 from contextlib import asynccontextmanager
@@ -36,6 +37,24 @@ elif env_file.exists():
     load_dotenv(env_file, override=True)
 else:
     print("WARNING: No .env.local or .env file found - using system environment variables only")
+
+# Configure logging from environment
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.INFO),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
+# Suppress noisy third-party loggers
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)  # Suppress connection pool warnings
+logging.getLogger("asyncio").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
+
 
 import vertexai
 from fastapi import FastAPI, HTTPException, UploadFile, File, status, Depends
@@ -79,28 +98,28 @@ async def lifespan(app: FastAPI):
     global genai_client, document_processor
     
     # Startup: Initialize Vertex AI with new Google Gen AI SDK
-    print(f"Initializing Google Gen AI (project={PROJECT_ID}, location={LOCATION})...")
+    logger.info(f"Initializing Google Gen AI (project={PROJECT_ID}, location={LOCATION})...")
     vertexai.init(project=PROJECT_ID, location=LOCATION)
     genai_client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
-    print("Google Gen AI client initialized successfully")
+    logger.info("Google Gen AI client initialized successfully")
     
     # Initialize database
-    print("Connecting to database...")
+    logger.info("Connecting to database...")
     await vector_db.connect()
     await vector_db.init_schema()
-    print("Database initialized successfully")
+    logger.info("Database initialized successfully")
     
     # Initialize document processor with genai client
     document_processor = DocumentProcessor(
         embedding_provider=EmbeddingProvider.VERTEX_AI,
         genai_client=genai_client
     )
-    print("Document processor initialized")
+    logger.info("Document processor initialized")
     
     yield
     
     # Shutdown: Cleanup resources
-    print("Shutting down...")
+    logger.info("Shutting down...")
     await vector_db.disconnect()
     genai_client = None
     document_processor = None
@@ -337,7 +356,7 @@ async def upload_document(
         existing = await vector_db.check_document_exists(file_hash)
         if existing:
             doc_id, doc_uuid, existing_filename = existing
-            print(f"Document already exists: ID={doc_id}, UUID={doc_uuid}, original={existing_filename}")
+            logger.info(f"Document already exists: ID={doc_id}, UUID={doc_uuid}, original={existing_filename}")
             return DocumentUploadResponse(
                 doc_id=doc_id,
                 doc_uuid=doc_uuid,
@@ -350,9 +369,9 @@ async def upload_document(
             )
         
         # Extract text from document
-        print(f"Processing document: {file.filename} ({file_type})")
+        logger.info(f"Processing document: {file.filename} ({file_type})")
         extracted_text = document_processor.extract_text(file_content, file_type)
-        print(f"Extracted {len(extracted_text)} characters")
+        logger.debug(f"Extracted {len(extracted_text)} characters")
         
         if not extracted_text.strip():
             raise HTTPException(
@@ -361,13 +380,13 @@ async def upload_document(
             )
         
         # Process chunks and embeddings FIRST (before DB record)
-        print(f"Starting chunking and embedding generation...")
+        logger.debug(f"Starting chunking and embedding generation...")
         chunks_data, embedding_stats = await document_processor.process_document(
             file_content=file_content,
             filename=file.filename,
             file_type=file_type
         )
-        print(f"Generated {len(chunks_data)} chunks with embeddings")
+        logger.info(f"Generated {len(chunks_data)} chunks with embeddings")
         
         # Validate we got chunks
         if not chunks_data:
@@ -402,7 +421,7 @@ async def upload_document(
                 "uploaded_via": "api",
             }
         )
-        print(f"Created document record: ID={doc_id}, UUID={doc_uuid}, user={user_email}")
+        logger.info(f"Created document record: ID={doc_id}, UUID={doc_uuid}, user={user_email}")
         
         try:
             # Upload all files to GCS (parallel)
@@ -413,7 +432,7 @@ async def upload_document(
                 chunks=gcs_chunks,
                 file_type=file_type
             )
-            print(f"Uploaded {len(gcs_chunks)} files to GCS: {doc_uuid}/")
+            logger.debug(f"Uploaded {len(gcs_chunks)} files to GCS: {doc_uuid}/")
             
             # Store only embeddings in PostgreSQL
             for i, embedding in enumerate(embeddings_only):
@@ -428,7 +447,7 @@ async def upload_document(
             
         except Exception as e:
             # Rollback: delete DB record and GCS files
-            print(f"Upload failed, rolling back: {e}")
+            logger.error(f"Upload failed, rolling back: {e}")
             try:
                 await document_storage.delete_document(doc_uuid)
             except Exception:
@@ -439,7 +458,7 @@ async def upload_document(
                 detail=f"Document upload failed: {str(e)}"
             )
         
-        print(f"Stored {len(gcs_chunks)} embeddings for document {file.filename}")
+        logger.info(f"Stored {len(gcs_chunks)} embeddings for document {file.filename}")
         
         return DocumentUploadResponse(
             doc_id=doc_id,
@@ -592,7 +611,7 @@ async def query_rag(
                     result["chunk_text"] = text
             except Exception as e:
                 # If GCS fetch fails, mark chunks with error
-                print(f"Failed to fetch chunks for {doc_uuid}: {e}")
+                logger.error(f"Failed to fetch chunks for {doc_uuid}: {e}")
                 for result in doc_results:
                     result["chunk_text"] = f"[Error: chunk not available - {str(e)}]"
                     result["fetch_error"] = True
@@ -893,9 +912,9 @@ async def delete_document(doc_id: int):
         # Delete from GCS
         try:
             await document_storage.delete_document(doc_uuid)
-            print(f"Deleted GCS files for {doc_uuid}")
+            logger.debug(f"Deleted GCS files for {doc_uuid}")
         except Exception as e:
-            print(f"Warning: GCS deletion failed for {doc_uuid}: {e}")
+            logger.warning(f"GCS deletion failed for {doc_uuid}: {e}")
             # Continue with DB deletion even if GCS fails
         
         # Delete from database (cascades to chunks)
@@ -963,9 +982,9 @@ async def delete_document_by_hash(file_hash: str):
         # Delete from GCS
         try:
             await document_storage.delete_document(doc_uuid)
-            print(f"Deleted GCS files for {doc_uuid} (hash: {file_hash})")
+            logger.debug(f"Deleted GCS files for {doc_uuid} (hash: {file_hash})")
         except Exception as e:
-            print(f"Warning: GCS deletion failed for {doc_uuid}: {e}")
+            logger.warning(f"GCS deletion failed for {doc_uuid}: {e}")
             # Continue even if GCS fails (DB already deleted)
         
         return DocumentDeleteResponse(
