@@ -99,19 +99,29 @@ class VectorDB:
                 USING hnsw (embedding vector_cosine_ops)
             """)
             
-            # GIN index for metadata filtering (MongoDB-style queries)
+            # GIN index for metadata filtering (MongoDB-style queries on JSONB)
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_documents_metadata 
                 ON original_documents USING gin(metadata)
             """)
             
-            # Specific index for user_id (most common filter for multi-tenancy)
+            # B-tree indexes for system column fields (most common filters)
             await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_documents_user_id 
-                ON original_documents ((metadata->>'user_id'))
+                CREATE INDEX IF NOT EXISTS idx_documents_uploaded_by 
+                ON original_documents (uploaded_by)
             """)
             
-            logger.info("Database schema initialized (GCS + UUID architecture + metadata filtering)")
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_documents_uploaded_at 
+                ON original_documents (uploaded_at)
+            """)
+            
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_documents_file_type 
+                ON original_documents (file_type)
+            """)
+            
+            logger.info("Database schema initialized (GCS + UUID + system columns + metadata filtering)")
     
     async def check_document_exists(self, file_hash: str) -> Optional[Tuple[int, str, str]]:
         """
