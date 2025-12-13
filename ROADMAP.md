@@ -1,8 +1,8 @@
 # RAG Lab - Product Roadmap
 
-**Last Updated:** December 11, 2025  
+**Last Updated:** December 13, 2025  
 **Current Version:** 0.2.0  
-**Status:** Production-ready with core features, missing industry-standard advanced features
+**Status:** Production-ready with core features + metadata filtering, missing industry-standard advanced features
 
 ---
 
@@ -18,12 +18,13 @@
 - ✅ Similarity threshold filtering (min_similarity parameter to filter irrelevant results)
 - ✅ SHA256 deduplication (prevents duplicate document uploads)
 - ✅ Hybrid storage architecture (PostgreSQL for embeddings, GCS for documents - 8.5x cost savings)
+- ✅ Metadata filtering (MongoDB Query Language with 12 operators: $and, $or, $not, $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $all, $exists)
 
 **Infrastructure & Operations:**
 - ✅ Cloud Run deployment with auto-scaling
 - ✅ Multi-cloud portable (works on GCP, AWS, Azure with PostgreSQL)
 - ✅ Cost-optimized ($7-12/month for 10k documents)
-- ✅ Comprehensive testing (74 tests: 49 unit, 20 e2e, 5 integration)
+- ✅ Comprehensive testing (122 tests: 29 filter parser unit, 64 models/utils unit, 29 e2e with metadata filtering)
 - ✅ Local development workflow with hot reload
 - ✅ File validation (3-tier: strict for PDF, structured for JSON/XML, lenient for text)
 
@@ -45,39 +46,123 @@ Currently, `/v1/query` searches across ALL documents without filtering. Cannot i
 
 **Use Cases:**
 ```python
-# User isolation (multi-tenancy)
+# Simple filter - user isolation (multi-tenancy)
 POST /v1/query
 {
   "query": "pricing strategy",
   "filters": {"user_id": "user123"}
 }
 
-# Document type filtering
+# Array filtering - ANY tag matches
 {
   "query": "contract terms",
-  "filters": {"file_type": "pdf", "tags": ["legal"]}
+  "filters": {
+    "tags": {"$in": ["legal", "contracts"]},
+    "file_type": "pdf"
+  }
 }
 
-# Time-based search
+# Range query - time-based search
 {
   "query": "Q4 2025 report",
   "filters": {
-    "uploaded_after": "2025-10-01",
-    "uploaded_before": "2025-12-31"
+    "created_at": {
+      "$gte": "2025-10-01",
+      "$lt": "2026-01-01"
+    }
   }
 }
 
-# Combined filters
+# Complex AND/OR/NOT logic
 {
   "query": "financial analysis",
   "filters": {
+    "$and": [
+      {"user_id": "user123"},
+      {
+        "$or": [
+          {"tags": {"$all": ["finance", "2025"]}},
+          {"department": "accounting"}
+        ]
+      },
+      {
+        "$not": {
+          "$or": [
+            {"status": "archived"},
+            {"confidentiality": {"$in": ["secret", "top-secret"]}}
+          ]
+        }
+      }
+    ]
+  }
+}
+
+# Multiple conditions (implicit AND)
+{
+  "query": "legal documents",
+  "filters": {
     "user_id": "user123",
-    "tags": ["finance", "2025"],
-    "file_type": "pdf",
-    "department": "accounting"
+    "tags": {"$all": ["legal", "reviewed"]},
+    "status": {"$ne": "draft"},
+    "created_at": {"$gte": "2025-01-01"}
   }
 }
 ```
+
+**Filter Query Language:**
+We use **MongoDB Query Language** for filters (industry standard, familiar to 90% of developers):
+
+```python
+# Simple filters (implicit AND)
+{
+  "filters": {
+    "user_id": "user123",
+    "tags": ["finance", "2025"]  # Array contains ANY
+  }
+}
+
+# Complex filters with logical operators
+{
+  "filters": {
+    "$and": [
+      {"user_id": "user123"},
+      {
+        "$or": [
+          {"tags": {"$in": ["finance", "legal"]}},
+          {"department": "accounting"}
+        ]
+      },
+      {
+        "$not": {
+          "$or": [
+            {"status": "archived"},
+            {"confidentiality": "top-secret"}
+          ]
+        }
+      },
+      {"created_at": {"$gte": "2025-01-01", "$lt": "2026-01-01"}}
+    ]
+  }
+}
+```
+
+**Supported Operators:**
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `$and` | All conditions must match | `{"$and": [A, B, C]}` |
+| `$or` | At least one condition must match | `{"$or": [A, B, C]}` |
+| `$not` | Inverts the condition | `{"$not": {"status": "archived"}}` |
+| `$eq` | Equals (default for scalars) | `{"status": "approved"}` or `{"status": {"$eq": "approved"}}` |
+| `$ne` | Not equals | `{"status": {"$ne": "archived"}}` |
+| `$gt` | Greater than | `{"score": {"$gt": 80}}` |
+| `$gte` | Greater than or equal | `{"created_at": {"$gte": "2025-01-01"}}` |
+| `$lt` | Less than | `{"score": {"$lt": 50}}` |
+| `$lte` | Less than or equal | `{"created_at": {"$lte": "2025-12-31"}}` |
+| `$in` | Value in array (ANY) | `{"tags": {"$in": ["finance", "legal"]}}` |
+| `$nin` | Value not in array | `{"status": {"$nin": ["draft", "deleted"]}}` |
+| `$all` | Array contains ALL values | `{"tags": {"$all": ["finance", "2025"]}}` |
+| `$exists` | Field exists/doesn't exist | `{"reviewed_by": {"$exists": true}}` |
 
 **Implementation Plan:**
 1. **Database Schema:**
@@ -85,42 +170,121 @@ POST /v1/query
    - Create GIN index: `CREATE INDEX idx_metadata ON original_documents USING gin(metadata);`
    - Migrate existing docs: `UPDATE original_documents SET metadata = '{"uploaded_by": "system"}'::jsonb`
 
-2. **API Changes:**
+2. **Filter Parser (MongoDB → PostgreSQL):**
+   - Create `src/lib/filter_parser.py` to translate MongoDB query language to PostgreSQL WHERE clauses
+   - Support all operators: `$and`, `$or`, `$not`, `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$all`, `$exists`
+   - Generate parameterized queries to prevent SQL injection
+   - Return tuple: `(where_clause: str, params: list)`
+
+3. **API Changes:**
    - Add `filters: Optional[dict]` parameter to `QueryRequest` model
    - Update `search_similar_chunks()` in database.py to accept filters
-   - SQL WHERE clause: `WHERE metadata @> $filters::jsonb`
-   - Support operators: `@>` (contains), `?` (key exists), `@?` (path exists)
+   - Call filter parser to generate WHERE clause
+   - Append to existing similarity filter: `WHERE similarity >= $min AND (parsed_filters)`
 
-3. **Upload Endpoint:**
-   - Accept optional `metadata` in upload request
+4. **Upload Endpoint:**
+   - Accept optional `metadata` in upload request (JSON field in multipart/form-data)
    - Store in database: `INSERT ... metadata = $metadata::jsonb`
    - Default metadata: `{"uploaded_at": timestamp, "uploaded_by": "api"}`
 
-4. **Testing:**
-   - Unit tests: metadata filtering logic
-   - E2E tests: multi-tenant isolation validation
-   - Performance tests: GIN index query speed
+5. **Testing:**
+   - Unit tests: filter parser logic (all operators, nested conditions, edge cases)
+   - Integration tests: metadata filtering with real database queries
+   - E2E tests: multi-tenant isolation validation (user_id filtering)
+   - Performance tests: GIN index query speed with complex filters
 
 **Example Code:**
 ```python
-# QueryRequest model
+# QueryRequest model with MongoDB-style filters
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 5
     min_similarity: float = 0.0
-    filters: Optional[dict] = None  # NEW
+    filters: Optional[dict] = None  # MongoDB query language
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "query": "contract analysis",
+                "top_k": 5,
+                "min_similarity": 0.7,
+                "filters": {
+                    "$and": [
+                        {"user_id": "user123"},
+                        {"tags": {"$in": ["legal", "contracts"]}},
+                        {"$not": {"status": "archived"}}
+                    ]
+                }
+            }
+        }
 
-# Database query
+# Filter parser (MongoDB → PostgreSQL)
+from src.lib.filter_parser import parse_filters
+
+# In search_similar_chunks()
 async def search_similar_chunks(..., filters: Optional[dict] = None):
-    query = """
+    where_clause = "(1 - (c.embedding <=> $1)) >= $2"
+    params = [embedding, min_similarity]
+    
+    if filters:
+        filter_where, filter_params = parse_filters(filters)
+        where_clause += f" AND ({filter_where})"
+        params.extend(filter_params)
+    
+    query = f"""
         SELECT ... FROM document_chunks c
         JOIN original_documents d ON c.original_doc_id = d.id
-        WHERE (1 - (c.embedding <=> $1)) >= $3
-        AND ($4::jsonb IS NULL OR d.metadata @> $4::jsonb)  -- NEW
+        WHERE {where_clause}
         ORDER BY c.embedding <=> $1
-        LIMIT $2
+        LIMIT $3
     """
-    await conn.fetch(query, embedding, top_k, min_similarity, filters)
+    params.append(top_k)
+    return await conn.fetch(query, *params)
+```
+
+**Filter Parser Implementation:**
+```python
+# src/lib/filter_parser.py
+def parse_filters(filters: dict) -> tuple[str, list]:
+    """
+    Convert MongoDB query language to PostgreSQL WHERE clause.
+    
+    Returns: (where_clause, params)
+    """
+    conditions = []
+    params = []
+    
+    for key, value in filters.items():
+        if key == "$and":
+            and_conditions = [parse_filters(f) for f in value]
+            and_clause = " AND ".join(f"({c[0]})" for c in and_conditions)
+            conditions.append(and_clause)
+            for c in and_conditions:
+                params.extend(c[1])
+        
+        elif key == "$or":
+            or_conditions = [parse_filters(f) for f in value]
+            or_clause = " OR ".join(f"({c[0]})" for c in or_conditions)
+            conditions.append(or_clause)
+            for c in or_conditions:
+                params.extend(c[1])
+        
+        elif key == "$not":
+            not_clause, not_params = parse_filters(value)
+            conditions.append(f"NOT ({not_clause})")
+            params.extend(not_params)
+        
+        else:
+            # Field-level operators
+            if isinstance(value, dict):
+                field_conditions = parse_field_operators(key, value, params)
+                conditions.append(field_conditions)
+            else:
+                # Simple equality: {"user_id": "user123"}
+                conditions.append(f"d.metadata->>${len(params)+1} = ${len(params)+2}")
+                params.extend([key, value])
+    
+    return " AND ".join(conditions), params
 ```
 
 **Benefits:**
@@ -462,14 +626,26 @@ CREATE TABLE query_logs (
 ### Phase 1: Production Readiness (Next 2 Weeks)
 **Goal:** Make RAG Lab production-ready for multi-tenant SaaS
 
-1. **Metadata Filtering + Multi-Tenancy** (4 hours) 🔴 P0
-   - Add JSONB metadata column with GIN index
-   - Implement filters parameter in query API
-   - Add user_id to upload metadata
-   - Update all queries to filter by metadata
-   - Write tests for multi-tenant isolation
+1. **Metadata Filtering + Multi-Tenancy** ✅ COMPLETED (Dec 13, 2025)
+   - ✅ Add JSONB metadata column with GIN index
+   - ✅ Implement filters parameter in query API (MongoDB Query Language)
+   - ✅ Add user_id to upload metadata
+   - ✅ Update all queries to filter by metadata
+   - ⚠️ Write tests for multi-tenant isolation (in progress)
+   
+2. **Security: X-End-User-ID Access Control** 🔴 P0 TODO
+   - **Problem:** Currently ANY client can impersonate ANY user via X-End-User-ID header
+   - **Solution:** Restrict X-End-User-ID header to trusted service accounts only
+   - **Implementation:**
+     - Add config parameter: `TRUSTED_SERVICE_ACCOUNTS` (list of allowed principals)
+     - Validate JWT: only listed service accounts can set X-End-User-ID
+     - All other requests: X-End-User-ID ignored, use JWT subject instead
+     - Return 403 if unauthorized principal tries to set X-End-User-ID
+   - **Use Case:** Backend services can act on behalf of users, but direct API clients cannot
+   - **Effort:** 2 hours
+   - **Impact:** CRITICAL - prevents impersonation attacks in production
 
-**Deliverable:** Production-ready multi-tenant RAG system
+**Deliverable:** Production-ready multi-tenant RAG system with secure user isolation
 
 ---
 
@@ -568,9 +744,9 @@ ON original_documents ((metadata->>'user_id'));
 # Upload with metadata
 curl -X POST /v1/documents/upload \
   -F "file=@report.pdf" \
-  -F "metadata={\"user_id\":\"user123\",\"tags\":[\"finance\",\"Q4\"],\"department\":\"accounting\"}"
+  -F "metadata={\"user_id\":\"user123\",\"tags\":[\"finance\",\"Q4\"],\"department\":\"accounting\",\"status\":\"approved\"}"
 
-# Query with filters
+# Simple filter query
 curl -X POST /v1/query \
   -H "Content-Type: application/json" \
   -d '{
@@ -579,29 +755,71 @@ curl -X POST /v1/query \
     "min_similarity": 0.5,
     "filters": {
       "user_id": "user123",
-      "tags": ["finance"]
+      "tags": {"$in": ["finance", "accounting"]}
     }
   }'
 
-# Complex filtering (JSONB operators)
-{
-  "filters": {
-    "user_id": "user123",           # Exact match
-    "tags": ["finance", "2025"],    # Array contains
-    "created_at": {                 # Range query
-      ">=": "2025-01-01",
-      "<=": "2025-12-31"
+# Complex filter with AND/OR/NOT
+curl -X POST /v1/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "contract terms",
+    "filters": {
+      "$and": [
+        {"user_id": "user123"},
+        {
+          "$or": [
+            {"tags": {"$all": ["legal", "reviewed"]}},
+            {"department": "legal"}
+          ]
+        },
+        {
+          "$not": {
+            "$or": [
+              {"status": "archived"},
+              {"confidentiality": "top-secret"}
+            ]
+          }
+        },
+        {"created_at": {"$gte": "2025-01-01"}}
+      ]
     }
-  }
-}
+  }'
+
+# Range queries
+curl -X POST /v1/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "quarterly reports",
+    "filters": {
+      "created_at": {
+        "$gte": "2025-10-01",
+        "$lt": "2026-01-01"
+      },
+      "score": {"$gte": 80}
+    }
+  }'
 ```
 
-**PostgreSQL JSONB Operators:**
-- `@>` - Contains (filter matches if document metadata contains all filter keys)
-- `?` - Key exists
-- `->` - Get value
-- `->>` - Get value as text
-- `@?` - JSONPath query
+**MongoDB → PostgreSQL Mapping:**
+
+| MongoDB Filter | PostgreSQL WHERE Clause | Example |
+|----------------|-------------------------|---------|
+| `{"field": "value"}` | `metadata->>'field' = 'value'` | Exact match |
+| `{"field": {"$eq": "value"}}` | `metadata->>'field' = 'value'` | Explicit equality |
+| `{"field": {"$ne": "value"}}` | `metadata->>'field' != 'value'` | Not equal |
+| `{"field": {"$gt": 100}}` | `(metadata->>'field')::numeric > 100` | Greater than |
+| `{"field": {"$gte": 100}}` | `(metadata->>'field')::numeric >= 100` | Greater or equal |
+| `{"field": {"$lt": 100}}` | `(metadata->>'field')::numeric < 100` | Less than |
+| `{"field": {"$lte": 100}}` | `(metadata->>'field')::numeric <= 100` | Less or equal |
+| `{"tags": {"$in": ["a","b"]}}` | `metadata->'tags' ?| array['a','b']` | Array contains ANY |
+| `{"tags": {"$all": ["a","b"]}}` | `metadata->'tags' ?& array['a','b']` | Array contains ALL |
+| `{"tags": {"$nin": ["a","b"]}}` | `NOT (metadata->'tags' ?| array['a','b'])` | Array contains NONE |
+| `{"field": {"$exists": true}}` | `metadata ? 'field'` | Key exists |
+| `{"field": {"$exists": false}}` | `NOT (metadata ? 'field')` | Key doesn't exist |
+| `{"$and": [A, B]}` | `(A_clause) AND (B_clause)` | Logical AND |
+| `{"$or": [A, B]}` | `(A_clause) OR (B_clause)` | Logical OR |
+| `{"$not": A}` | `NOT (A_clause)` | Logical NOT |
 
 ---
 

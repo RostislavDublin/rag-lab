@@ -11,7 +11,7 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
 - **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
-- **Comprehensive testing**: 69 tests (49 unit, 20 e2e with semantic validation)
+- **Comprehensive testing**: 122 tests (29 unit filter parser, 64 unit models/utils, 29 e2e with metadata filtering)
 
 ## Architecture
 
@@ -389,6 +389,11 @@ Upload and process documents with strict validation. Automatically detects and r
 curl -X POST http://localhost:8080/v1/documents/upload \
   -F "file=@document.pdf"
 
+# With custom metadata for filtering
+curl -X POST http://localhost:8080/v1/documents/upload \
+  -F "file=@document.pdf" \
+  -F 'metadata={"user_id": "user123", "tags": ["finance", "Q4"], "department": "accounting"}'
+
 # HTML file (converted to Markdown)
 curl -X POST http://localhost:8080/v1/documents/upload \
   -F "file=@page.html"
@@ -444,7 +449,7 @@ curl -X POST http://localhost:8080/v1/documents/upload \
 
 ### `POST /v1/query`
 
-Query RAG system with natural language and relevance filtering.
+Query RAG system with natural language, relevance filtering, and metadata filtering.
 
 **Request parameters:**
 - `query` (string, required): Natural language query
@@ -453,12 +458,68 @@ Query RAG system with natural language and relevance filtering.
   - **0.0** = no filtering (returns all top_k results regardless of relevance)
   - **0.5** = moderate filter (recommended for production - filters out irrelevant documents)
   - **0.7** = strict filter (only highly relevant results)
+- `filters` (dict, optional): MongoDB-style metadata filters for multi-tenant isolation and categorization
+  - **Supported operators:** `$and`, `$or`, `$not`, `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$all`, `$exists`
+  - Simple equality: `{"user_id": "user123"}`
+  - Array matching: `{"tags": {"$in": ["finance", "legal"]}}`
+  - Complex logic: `{"$and": [{"user_id": "user123"}, {"$not": {"status": "archived"}}]}`
+
+**Metadata filtering benefits:**
+- **Multi-tenant isolation:** Filter by `user_id` to show only user's documents
+- **Document categorization:** Filter by tags, departments, status, etc.
+- **Time-based filtering:** Filter by `created_at`, `uploaded_at`
+- **Custom business logic:** Combine multiple conditions with AND/OR/NOT
 
 **Why use similarity threshold:**
 - Filters out irrelevant user documents in shared/multi-tenant databases
 - Prevents low-quality results from polluting responses
 - "Better fewer good results than many bad ones"
 - Makes tests resilient to unrelated documents in production DB
+
+**Request with simple metadata filter:**
+```bash
+curl -X POST http://localhost:8080/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "revenue analysis",
+    "top_k": 5,
+    "min_similarity": 0.5,
+    "filters": {
+      "user_id": "user123",
+      "tags": {"$in": ["finance", "accounting"]}
+    }
+  }'
+```
+
+**Request with complex AND/OR/NOT logic:**
+```bash
+curl -X POST http://localhost:8080/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "contract terms",
+    "top_k": 5,
+    "filters": {
+      "$and": [
+        {"user_id": "user123"},
+        {
+          "$or": [
+            {"tags": {"$all": ["legal", "reviewed"]}},
+            {"department": "legal"}
+          ]
+        },
+        {
+          "$not": {
+            "$or": [
+              {"status": "archived"},
+              {"confidentiality": "top-secret"}
+            ]
+          }
+        },
+        {"created_at": {"$gte": "2025-01-01"}}
+      ]
+    }
+  }'
+```
 
 **Request with filtering (recommended):**
 ```bash
@@ -480,6 +541,22 @@ curl -X POST http://localhost:8080/v1/query \
     "top_k": 3
   }'
 ```
+
+**MongoDB-style filter operators:**
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `$and` | All conditions must match | `{"$and": [A, B, C]}` |
+| `$or` | At least one condition | `{"$or": [A, B]}` |
+| `$not` | Inverts condition | `{"$not": {"status": "archived"}}` |
+| `$eq` | Equals (implicit) | `{"status": "approved"}` |
+| `$ne` | Not equals | `{"status": {"$ne": "draft"}}` |
+| `$gt`, `$gte` | Greater than (or equal) | `{"score": {"$gte": 80}}` |
+| `$lt`, `$lte` | Less than (or equal) | `{"created_at": {"$lt": "2026-01-01"}}` |
+| `$in` | Value in array (ANY) | `{"tags": {"$in": ["finance", "legal"]}}` |
+| `$nin` | Value not in array | `{"status": {"$nin": ["draft", "deleted"]}}` |
+| `$all` | Array contains ALL | `{"tags": {"$all": ["finance", "2025"]}}` |
+| `$exists` | Field exists | `{"reviewed_by": {"$exists": true}}` |
 
 **Response:**
 ```json
@@ -1166,7 +1243,7 @@ cd deployment
 - **Google Gen AI SDK:** text-embedding-005 embeddings (768 dimensions)
 - **Local development:** uvicorn hot reload + Cloud SQL Proxy
 - **Automated deployment:** GCP infrastructure setup + Cloud Run
-- **Comprehensive testing:** 68 tests (49 unit, 5 integration, 14 e2e)
+- **Comprehensive testing:** 122 tests (29 filter parser unit, 64 models/utils unit, 29 e2e with metadata filtering)
 - **Test fixtures:** 15 documents covering all supported formats
 
 ## Roadmap
@@ -1174,6 +1251,7 @@ cd deployment
 - [x] ~~Document listing endpoint~~ - `GET /v1/documents` implemented
 - [x] ~~Document deletion endpoint~~ - `DELETE /v1/documents/{id}` and `DELETE /v1/documents/by-hash/{hash}` implemented
 - [x] ~~Implement authentication~~ - JWT/JWKS with OAuth2, vendor-independent
+- [x] ~~Metadata filtering in queries~~ - MongoDB Query Language with 12 operators ($and, $or, $not, $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $all, $exists)
 - [ ] Document download endpoint: `GET /v1/documents/{uuid}/download` (GCS signed URL)
 - [ ] Add Gemini integration for answer generation
 - [ ] Add rate limiting (slowapi)
@@ -1182,7 +1260,6 @@ cd deployment
 - [ ] Create Kubernetes manifests for GKE
 - [ ] Search result reranking
 - [ ] Redis caching for hot chunks (reduce GCS calls)
-- [ ] Metadata filtering in queries (by filename, date, type)
 
 ## License
 

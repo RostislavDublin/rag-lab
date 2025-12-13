@@ -14,6 +14,7 @@ Architecture:
 """
 
 import asyncio
+import json
 import logging
 import os
 import warnings
@@ -57,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 
 import vertexai
-from fastapi import FastAPI, HTTPException, UploadFile, File, status, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -208,6 +209,51 @@ class QueryRequest(BaseModel):
         le=1.0,
         description="Minimum similarity threshold (0.0-1.0). Results below this are filtered out."
     )
+    filters: Optional[dict] = Field(
+        default=None,
+        description="MongoDB-style metadata filters. Supports: $and, $or, $not, $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $all, $exists",
+        examples=[
+            {
+                "user_id": "user123",
+                "tags": {"$in": ["finance", "legal"]}
+            },
+            {
+                "$and": [
+                    {"user_id": "user123"},
+                    {"tags": {"$all": ["finance", "2025"]}},
+                    {"$not": {"status": "archived"}}
+                ]
+            },
+            {
+                "$or": [
+                    {"department": "legal"},
+                    {"tags": {"$in": ["contracts", "legal"]}}
+                ]
+            }
+        ]
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "query": "contract analysis",
+                "top_k": 5,
+                "min_similarity": 0.7,
+                "filters": {
+                    "$and": [
+                        {"user_id": "user123"},
+                        {
+                            "$or": [
+                                {"tags": {"$in": ["legal", "contracts"]}},
+                                {"department": "legal"}
+                            ]
+                        },
+                        {"$not": {"status": "archived"}},
+                        {"created_at": {"$gte": "2025-01-01"}}
+                    ]
+                }
+            }
+        }
 
 
 class QueryResultItem(BaseModel):
@@ -254,6 +300,7 @@ class DocumentInfo(BaseModel):
     file_hash: str = Field(..., description="SHA256 hash of file content (64 hex chars)")
     chunk_count: int
     uploaded_at: str
+    metadata: dict = Field(default_factory=dict, description="Document metadata (system + user fields)")
 
 
 class DocumentListResponse(BaseModel):
@@ -306,6 +353,7 @@ async def health():
 @app.post("/v1/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
+    metadata: Optional[str] = Form(None),  # JSON string with custom metadata
     user_email: str = Depends(get_current_user)  # JWT authentication required
 ):
     """
@@ -319,6 +367,7 @@ async def upload_document(
     - Generates embeddings
     - Stores in two-level architecture (original + chunks)
     - Records uploader metadata (user_email, timestamp)
+    - Stores custom metadata for filtering
     
     Supported formats:
     - PDF: .pdf
@@ -326,10 +375,16 @@ async def upload_document(
     - Data: .json, .csv, .xml, .yaml, .yml, .toml, .ini
     - Code: .py, .js, .html, .css
     
+    **Metadata parameter:**
+    - JSON string with custom fields for filtering (optional)
+    - Automatically includes: uploaded_by, uploaded_at, uploaded_via
+    - Example: '{"user_id": "user123", "tags": ["finance", "Q4"], "department": "accounting"}'
+    
     Example:
         POST /v1/documents/upload
         Content-Type: multipart/form-data
         file: document.pdf
+        metadata: '{"user_id": "user123", "tags": ["finance"], "department": "accounting"}'
     """
     try:
         # Read file content first (needed for validation)
@@ -403,20 +458,51 @@ async def upload_document(
             embeddings_only.append(embedding)
         
         # Create DB record (generates UUID) - AFTER validation
-        # Store uploader metadata for multi-tenancy and audit trail
+        # Parse and merge custom metadata with system metadata
+        custom_metadata = {}
+        if metadata:
+            try:
+                import json as json_module
+                custom_metadata = json_module.loads(metadata)
+                if not isinstance(custom_metadata, dict):
+                    raise ValueError("Metadata must be a JSON object")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid metadata JSON: {str(e)}"
+                )
+        
+        # SECURITY: System metadata fields are protected - user cannot override them
+        # Define protected system fields that user cannot set
+        PROTECTED_FIELDS = {
+            "uploaded_by", "uploaded_at", "uploaded_via", "original_filename",
+            # Future system fields should be added here:
+            # "verified_at", "is_sensitive", "access_level", etc.
+        }
+        
+        # Filter out any protected fields from user metadata (prevent impersonation)
+        filtered_metadata = {
+            k: v for k, v in custom_metadata.items() 
+            if k not in PROTECTED_FIELDS
+        }
+        
+        # Merge filtered user metadata with system metadata (system fields always win)
+        doc_metadata = {
+            **filtered_metadata,  # User-provided fields (filtered)
+            "original_filename": file.filename,
+            "uploaded_by": user_email,
+            "uploaded_at": datetime.utcnow().isoformat(),
+            "uploaded_via": "api",
+        }
+        
         doc_id, doc_uuid = await vector_db.insert_original_document(
             filename=file.filename,
             file_type=content_type,
             file_size=len(file_content),
             file_hash=file_hash,
-            metadata={
-                "original_filename": file.filename,
-                "uploaded_by": user_email,
-                "uploaded_at": datetime.utcnow().isoformat(),
-                "uploaded_via": "api",
-            }
+            metadata=doc_metadata
         )
-        logger.info(f"Created document record: ID={doc_id}, UUID={doc_uuid}, user={user_email}")
+        logger.info(f"Created document record: ID={doc_id}, UUID={doc_uuid}, user={user_email}, metadata={list(custom_metadata.keys())}")
         
         try:
             # Upload all files to GCS (parallel)
@@ -518,7 +604,7 @@ async def query_rag(
     user_email: str = Depends(get_current_user)  # JWT authentication required
 ):
     """
-    Query RAG system with semantic search and relevance filtering - REQUIRES AUTHENTICATION
+    Query RAG system with semantic search, relevance filtering, and metadata filtering - REQUIRES AUTHENTICATION
     
     **Authentication:** Requires valid Google ID token in Authorization header.
     
@@ -526,8 +612,9 @@ async def query_rag(
     1. Generate query embedding using Vertex AI text-embedding-005
     2. Vector search in PostgreSQL (cosine similarity)
     3. Filter by similarity threshold (optional)
-    4. Fetch chunk texts from GCS (parallel)
-    5. Return ranked results with metadata
+    4. Filter by metadata (optional - MongoDB query language)
+    5. Fetch chunk texts from GCS (parallel)
+    6. Return ranked results with metadata
     
     **Parameters:**
     - `query` (str): Natural language query
@@ -536,6 +623,17 @@ async def query_rag(
       - 0.0 = no filtering (returns all top_k results)
       - 0.5 = moderate filter (good for production - filters irrelevant docs)
       - 0.7 = strict filter (only highly relevant results)
+    - `filters` (dict, optional): MongoDB-style metadata filters for multi-tenant isolation and categorization
+      - Supports: $and, $or, $not, $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $all, $exists
+      - Simple equality: {"user_id": "user123"}
+      - Array matching: {"tags": {"$in": ["finance", "legal"]}}
+      - Complex logic: {"$and": [{"user_id": "user123"}, {"$not": {"status": "archived"}}]}
+    
+    **Metadata filtering benefits:**
+    - Multi-tenant isolation (filter by user_id)
+    - Document categorization (tags, departments)
+    - Time-based filtering (uploaded_after, created_before)
+    - Custom business logic (status, visibility, confidentiality)
     
     **Similarity threshold benefits:**
     - Filters out irrelevant user documents in shared databases
@@ -543,12 +641,44 @@ async def query_rag(
     - "Better fewer good results than many bad ones"
     - Useful for multi-tenant deployments
     
-    **Example with filtering:**
+    **Example with simple metadata filter:**
     ```json
     {
-        "query": "Which smartphone has the best camera?",
+        "query": "revenue analysis",
         "top_k": 5,
-        "min_similarity": 0.5
+        "min_similarity": 0.5,
+        "filters": {
+            "user_id": "user123",
+            "tags": {"$in": ["finance", "accounting"]}
+        }
+    }
+    ```
+    
+    **Example with complex AND/OR/NOT logic:**
+    ```json
+    {
+        "query": "contract terms",
+        "top_k": 5,
+        "filters": {
+            "$and": [
+                {"user_id": "user123"},
+                {
+                    "$or": [
+                        {"tags": {"$all": ["legal", "reviewed"]}},
+                        {"department": "legal"}
+                    ]
+                },
+                {
+                    "$not": {
+                        "$or": [
+                            {"status": "archived"},
+                            {"confidentiality": "top-secret"}
+                        ]
+                    }
+                },
+                {"created_at": {"$gte": "2025-01-01"}}
+            ]
+        }
     }
     ```
     
@@ -566,7 +696,7 @@ async def query_rag(
     - `filename`: Original document name
     - `chunk_index`: Position in document (0-based)
     - `doc_uuid`: Globally unique document identifier
-    - `doc_metadata`: Custom metadata from upload
+    - `doc_metadata`: Custom metadata from upload (includes user_id, tags, etc.)
     """
     try:
         if genai_client is None:
@@ -582,11 +712,12 @@ async def query_rag(
         )
         query_embedding = response.embeddings[0].values
         
-        # Vector search (returns chunk indices + doc_uuid)
+        # Vector search with optional metadata filtering
         results = await vector_db.search_similar_chunks(
             query_embedding=query_embedding,
             top_k=request.top_k,
-            min_similarity=request.min_similarity
+            min_similarity=request.min_similarity,
+            filters=request.filters
         )
         
         # Group by document UUID for efficient GCS fetching
@@ -850,7 +981,7 @@ async def list_documents():
             rows = await conn.fetch("""
                 SELECT 
                     id, doc_uuid, filename, file_type, file_size, file_hash,
-                    chunk_count, uploaded_at
+                    chunk_count, uploaded_at, metadata
                 FROM original_documents
                 ORDER BY uploaded_at DESC
             """)
@@ -865,6 +996,7 @@ async def list_documents():
                 file_hash=row["file_hash"],
                 chunk_count=row["chunk_count"],
                 uploaded_at=row["uploaded_at"].isoformat(),
+                metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else (row["metadata"] or {}),
             )
             for row in rows
         ]

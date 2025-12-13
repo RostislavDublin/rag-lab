@@ -154,21 +154,24 @@ async def get_current_user(
     
     # Verify token using JWKS
     user_info = verify_jwt_token(token)
+    jwt_email = user_info["email"]
     
-    # Determine effective user:
+    # Check authorization (whitelist) for JWT user (ALWAYS)
+    # This ensures only authorized users can access the API
+    check_authorization(jwt_email)
+    
+    # Determine effective user for metadata:
     # - If X-End-User-ID header present: use it (service-to-service flow)
+    #   TODO: Implement TRUSTED_SERVICE_ACCOUNTS check (Phase 1 security requirement)
     # - Otherwise: use email from token (user-to-service flow)
     if x_end_user_id:
-        email = x_end_user_id
-        logger.info(f"Service-to-service request: SA token with end user={email}")
+        effective_user = x_end_user_id
+        logger.info(f"Service-to-service request: JWT user={jwt_email}, end user={effective_user}")
     else:
-        email = user_info["email"]
-        logger.info(f"User-to-service request: user={email}")
+        effective_user = jwt_email
+        logger.info(f"User-to-service request: user={effective_user}")
     
-    # Check authorization (whitelist) for the effective user
-    check_authorization(email)
-    
-    return email
+    return effective_user
 
 
 async def get_current_user_optional(

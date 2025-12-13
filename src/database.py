@@ -96,7 +96,19 @@ class VectorDB:
                 USING hnsw (embedding vector_cosine_ops)
             """)
             
-            logger.info("Database schema initialized (GCS + UUID architecture)")
+            # GIN index for metadata filtering (MongoDB-style queries)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_documents_metadata 
+                ON original_documents USING gin(metadata)
+            """)
+            
+            # Specific index for user_id (most common filter for multi-tenancy)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_documents_user_id 
+                ON original_documents ((metadata->>'user_id'))
+            """)
+            
+            logger.info("Database schema initialized (GCS + UUID architecture + metadata filtering)")
     
     async def check_document_exists(self, file_hash: str) -> Optional[Tuple[int, str, str]]:
         """
@@ -136,14 +148,14 @@ class VectorDB:
                 """
                 INSERT INTO original_documents 
                     (filename, file_type, file_size, file_hash, metadata)
-                VALUES ($1, $2, $3, $4, $5::jsonb)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING id, doc_uuid
                 """,
                 filename,
                 file_type,
                 file_size,
                 file_hash,
-                json.dumps(metadata or {}),
+                json.dumps(metadata) if metadata else json.dumps({}),
             )
             return row["id"], str(row["doc_uuid"])
     
@@ -180,39 +192,58 @@ class VectorDB:
         query_embedding: List[float],
         top_k: int = 5,
         min_similarity: float = 0.0,
+        filters: Optional[dict] = None,
     ) -> List[dict]:
         """
-        Search for similar chunks using cosine similarity
+        Search for similar chunks using cosine similarity with optional metadata filtering
         
         Args:
             query_embedding: Query vector
             top_k: Maximum number of results to return
             min_similarity: Minimum similarity threshold (0.0-1.0). Results below this are filtered out.
+            filters: MongoDB-style metadata filters (e.g., {"user_id": "user123", "tags": {"$in": ["finance"]}})
         
         Returns chunk indices with doc_uuid for fetching from GCS
         """
+        # Build WHERE clause with optional filters
+        where_conditions = ["(1 - (c.embedding <=> $1::vector)) >= $3"]
+        params = [query_embedding, top_k, min_similarity]
+        
+        if filters:
+            from .lib.filter_parser import FilterParseError, _parse_filters_with_offset
+            
+            try:
+                # Offset by 3: $1=embedding, $2=top_k, $3=min_similarity
+                filter_clause, filter_params = _parse_filters_with_offset(
+                    filters, table_alias="d", param_offset=3
+                )
+                where_conditions.append(f"({filter_clause})")
+                params.extend(filter_params)
+            except FilterParseError as e:
+                logger.error(f"Filter parsing failed: {e}")
+                raise ValueError(f"Invalid filter syntax: {e}")
+        
+        where_clause = " AND ".join(where_conditions)
+        
+        query = f"""
+            SELECT 
+                c.id as chunk_id,
+                c.chunk_index,
+                c.original_doc_id,
+                d.doc_uuid,
+                d.filename,
+                d.file_type,
+                d.metadata as doc_metadata,
+                1 - (c.embedding <=> $1::vector) as similarity
+            FROM document_chunks c
+            JOIN original_documents d ON c.original_doc_id = d.id
+            WHERE {where_clause}
+            ORDER BY c.embedding <=> $1::vector
+            LIMIT $2
+        """
+        
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT 
-                    c.id as chunk_id,
-                    c.chunk_index,
-                    c.original_doc_id,
-                    d.doc_uuid,
-                    d.filename,
-                    d.file_type,
-                    d.metadata as doc_metadata,
-                    1 - (c.embedding <=> $1::vector) as similarity
-                FROM document_chunks c
-                JOIN original_documents d ON c.original_doc_id = d.id
-                WHERE (1 - (c.embedding <=> $1::vector)) >= $3
-                ORDER BY c.embedding <=> $1::vector
-                LIMIT $2
-                """,
-                query_embedding,
-                top_k,
-                min_similarity,
-            )
+            rows = await conn.fetch(query, *params)
             return [
                 {
                     "chunk_id": row["chunk_id"],

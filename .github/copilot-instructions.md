@@ -28,6 +28,33 @@ Active learning project - experimentation and prototyping phase.
 
 **READ THIS BEFORE EVERY SERVER START! NO EXCEPTIONS!**
 
+### CRITICAL: PYTEST E2E TEST EXECUTION
+
+**NEVER attempt to run a single test method from `tests/e2e/test_full_rag_workflow.py`**
+
+- E2E tests are **DEPENDENT** - they run in sequence (test_01, test_02, test_03, etc.)
+- Each test depends on data/state from previous tests
+- Running one test in isolation will ALWAYS FAIL
+- User has reminded about this MULTIPLE times - DO NOT FORGET
+
+**Correct ways to run E2E tests:**
+```bash
+# Run ALL E2E tests (recommended)
+pytest tests/e2e/test_full_rag_workflow.py -v
+
+# Run entire test suite
+pytest tests/ -v
+
+# Run specific test file (if independent tests)
+pytest tests/unit/test_filter_parser.py::test_specific_function -v
+```
+
+**WRONG - NEVER DO THIS:**
+```bash
+# This will FAIL because test depends on previous tests
+pytest tests/e2e/test_full_rag_workflow.py::test_04a_metadata_filter_single_user -v
+```
+
 ### PREREQUISITES (CHECK FIRST!):
 
 1. **`.env.local` MUST EXIST** in `/Users/Rostislav_Dublin/src/drs/ai/rag-lab/`
