@@ -260,3 +260,110 @@ class TestGetCurrentUser:
         
         with pytest.raises(auth.AuthError):
             await auth.get_current_user(credentials)
+
+
+class TestXEndUserIDSecurity:
+    """Test X-End-User-ID header security (service delegation)"""
+    
+    @pytest.mark.asyncio
+    async def test_regular_user_cannot_use_x_end_user_id(self, monkeypatch):
+        """Test that regular users cannot impersonate others via X-End-User-ID"""
+        monkeypatch.setenv("ALLOWED_USERS", "regularuser@example.com")
+        monkeypatch.setenv("TRUSTED_SERVICE_ACCOUNTS", "backend-sa@project.iam.gserviceaccount.com")
+        
+        from src import auth
+        auth.ALLOWED_USERS = ["regularuser@example.com"]
+        auth.TRUSTED_SERVICE_ACCOUNTS = ["backend-sa@project.iam.gserviceaccount.com"]
+        
+        import jwt as pyjwt
+        token = pyjwt.encode(
+            {"email": "regularuser@example.com", "sub": "user_123"},
+            "secret",
+            algorithm="HS256"
+        )
+        
+        from fastapi.security import HTTPAuthorizationCredentials
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        
+        # Regular user tries to set X-End-User-ID - should get 403
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.get_current_user(credentials, x_end_user_id="victim@example.com")
+        
+        assert exc_info.value.status_code == 403
+        assert "not authorized to use X-End-User-ID" in exc_info.value.detail
+    
+    @pytest.mark.asyncio
+    async def test_trusted_service_account_can_use_x_end_user_id(self, monkeypatch):
+        """Test that trusted service accounts can delegate via X-End-User-ID"""
+        monkeypatch.setenv("ALLOWED_USERS", "backend-sa@project.iam.gserviceaccount.com")
+        monkeypatch.setenv("TRUSTED_SERVICE_ACCOUNTS", "backend-sa@project.iam.gserviceaccount.com")
+        
+        from src import auth
+        auth.ALLOWED_USERS = ["backend-sa@project.iam.gserviceaccount.com"]
+        auth.TRUSTED_SERVICE_ACCOUNTS = ["backend-sa@project.iam.gserviceaccount.com"]
+        
+        import jwt as pyjwt
+        token = pyjwt.encode(
+            {"email": "backend-sa@project.iam.gserviceaccount.com", "sub": "sa_123"},
+            "secret",
+            algorithm="HS256"
+        )
+        
+        from fastapi.security import HTTPAuthorizationCredentials
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        
+        # Trusted SA can set X-End-User-ID
+        user_email = await auth.get_current_user(credentials, x_end_user_id="actualuser@example.com")
+        
+        assert user_email == "actualuser@example.com"
+    
+    @pytest.mark.asyncio
+    async def test_no_x_end_user_id_uses_jwt_email(self, monkeypatch):
+        """Test that without X-End-User-ID, JWT email is used"""
+        monkeypatch.setenv("ALLOWED_USERS", "user@example.com")
+        monkeypatch.setenv("TRUSTED_SERVICE_ACCOUNTS", "")
+        
+        from src import auth
+        auth.ALLOWED_USERS = ["user@example.com"]
+        auth.TRUSTED_SERVICE_ACCOUNTS = []
+        
+        import jwt as pyjwt
+        token = pyjwt.encode(
+            {"email": "user@example.com", "sub": "user_123"},
+            "secret",
+            algorithm="HS256"
+        )
+        
+        from fastapi.security import HTTPAuthorizationCredentials
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        
+        # No X-End-User-ID header - should use JWT email
+        user_email = await auth.get_current_user(credentials, x_end_user_id=None)
+        
+        assert user_email == "user@example.com"
+    
+    @pytest.mark.asyncio
+    async def test_empty_trusted_service_accounts_blocks_all_delegation(self, monkeypatch):
+        """Test that empty TRUSTED_SERVICE_ACCOUNTS blocks ALL X-End-User-ID usage"""
+        monkeypatch.setenv("ALLOWED_USERS", "user@example.com")
+        monkeypatch.setenv("TRUSTED_SERVICE_ACCOUNTS", "")
+        
+        from src import auth
+        auth.ALLOWED_USERS = ["user@example.com"]
+        auth.TRUSTED_SERVICE_ACCOUNTS = []
+        
+        import jwt as pyjwt
+        token = pyjwt.encode(
+            {"email": "user@example.com", "sub": "user_123"},
+            "secret",
+            algorithm="HS256"
+        )
+        
+        from fastapi.security import HTTPAuthorizationCredentials
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        
+        # No trusted SAs configured - any X-End-User-ID attempt should fail
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.get_current_user(credentials, x_end_user_id="someone@example.com")
+        
+        assert exc_info.value.status_code == 403

@@ -6,13 +6,15 @@ Supports any OIDC-compliant provider: Google, Azure AD, Auth0, Okta, etc.
 
 Authorization:
 - Whitelist-based: only emails in ALLOWED_USERS env var can access API
+- Service delegation: only emails in TRUSTED_SERVICE_ACCOUNTS can use X-End-User-ID
 - Future: Can extend to role-based access control (RBAC)
 
 Configuration (environment variables):
 - JWKS_URL: URL to provider's JWKS endpoint (e.g., https://www.googleapis.com/oauth2/v3/certs)
 - ISSUER: Expected token issuer (e.g., https://accounts.google.com)
 - AUDIENCE: Expected audience (client ID)
-- ALLOWED_USERS: Comma-separated whitelist of emails
+- ALLOWED_USERS: Comma-separated whitelist of emails (all authenticated users)
+- TRUSTED_SERVICE_ACCOUNTS: Comma-separated whitelist of service accounts that can delegate via X-End-User-ID
 """
 
 import os
@@ -39,7 +41,12 @@ AUDIENCE = os.getenv("AUDIENCE", "")  # Client ID
 ALLOWED_USERS_STR = os.getenv("ALLOWED_USERS", "javaisforever@gmail.com")
 ALLOWED_USERS = [email.strip() for email in ALLOWED_USERS_STR.split(",") if email.strip()]
 
-logger.info(f"Auth configured: {len(ALLOWED_USERS)} allowed users, JWKS={JWKS_URL}")
+# Trusted service accounts that can delegate via X-End-User-ID header
+# Regular users cannot impersonate others - only these whitelisted service accounts
+TRUSTED_SERVICE_ACCOUNTS_STR = os.getenv("TRUSTED_SERVICE_ACCOUNTS", "")
+TRUSTED_SERVICE_ACCOUNTS = [email.strip() for email in TRUSTED_SERVICE_ACCOUNTS_STR.split(",") if email.strip()]
+
+logger.info(f"Auth configured: {len(ALLOWED_USERS)} allowed users, {len(TRUSTED_SERVICE_ACCOUNTS)} trusted SAs, JWKS={JWKS_URL}")
 
 
 class AuthError(HTTPException):
@@ -130,10 +137,18 @@ async def get_current_user(
     
     Supports two authentication scenarios:
     1. User-to-Service: User's JWT token contains email (standard flow)
-    2. Service-to-Service: Service Account JWT + X-End-User-ID header
-       - Token must be valid (service account authenticated)
+       - X-End-User-ID header ignored (even if present)
+       - Uses email from JWT token
+    
+    2. Service-to-Service: Trusted Service Account JWT + X-End-User-ID header
+       - JWT user MUST be in TRUSTED_SERVICE_ACCOUNTS (otherwise HTTP 403)
        - X-End-User-ID header contains actual end user email
-       - End user must still be in ALLOWED_USERS whitelist
+       - Prevents impersonation attacks by regular users
+    
+    Security:
+    - JWT user always checked against ALLOWED_USERS whitelist
+    - Only TRUSTED_SERVICE_ACCOUNTS can use X-End-User-ID delegation
+    - Regular users cannot impersonate others (403 error)
     
     Usage:
         @app.get("/protected")
@@ -161,12 +176,20 @@ async def get_current_user(
     check_authorization(jwt_email)
     
     # Determine effective user for metadata:
-    # - If X-End-User-ID header present: use it (service-to-service flow)
-    #   TODO: Implement TRUSTED_SERVICE_ACCOUNTS check (Phase 1 security requirement)
+    # - If X-End-User-ID header present AND JWT user is trusted SA: use it (service-to-service flow)
     # - Otherwise: use email from token (user-to-service flow)
+    # Security: Only TRUSTED_SERVICE_ACCOUNTS can delegate via X-End-User-ID to prevent impersonation
     if x_end_user_id:
-        effective_user = x_end_user_id
-        logger.info(f"Service-to-service request: JWT user={jwt_email}, end user={effective_user}")
+        if jwt_email in TRUSTED_SERVICE_ACCOUNTS:
+            effective_user = x_end_user_id
+            logger.info(f"Service-to-service request: JWT SA={jwt_email}, end user={effective_user}")
+        else:
+            # Non-trusted principal tried to use X-End-User-ID - reject with 403
+            logger.warning(f"Unauthorized delegation attempt: {jwt_email} tried to set X-End-User-ID={x_end_user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"User {jwt_email} is not authorized to use X-End-User-ID header. Only trusted service accounts can delegate."
+            )
     else:
         effective_user = jwt_email
         logger.info(f"User-to-service request: user={effective_user}")

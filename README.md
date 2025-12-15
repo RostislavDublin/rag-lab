@@ -350,9 +350,10 @@ curl -X POST http://localhost:8080/v1/query \
    ```
 
 **Authorization:**
-- Whitelist-based: `ALLOWED_USERS` in `.env.local`
-- Data attribution: All operations tagged with user email
-- Service accounts can act on behalf of users via `X-End-User-ID` header
+- **Whitelist-based:** `ALLOWED_USERS` in `.env.local` (all authenticated users)
+- **Service delegation:** `TRUSTED_SERVICE_ACCOUNTS` - only these principals can use `X-End-User-ID`
+- **Data attribution:** All operations tagged with user email
+- **Security:** Regular users CANNOT impersonate others (403 Forbidden if X-End-User-ID used by non-trusted principal)
 
 **Protected Metadata Fields:**
 System-managed fields that cannot be overridden by user metadata uploads:

@@ -600,10 +600,10 @@ CREATE TABLE query_logs (
 | Smart Extraction | ✅ PDF→MD, JSON→YAML | ⚠️ Basic | ✅ Good | ❌ | ❌ |
 | Similarity Threshold | ✅ min_similarity | ⚠️ Manual | ✅ | ✅ | ✅ |
 | **Advanced Features** |
-| Metadata Filtering | ❌ **MISSING** | ✅ | ✅ | ✅ | ✅ |
-| Hybrid Search (BM25+Vector) | ❌ **MISSING** | ✅ | ✅ | ✅ Sparse-Dense | ✅ |
-| Reranking | ❌ **MISSING** | ✅ Cohere | ✅ Multiple | ✅ | ✅ |
-| Multi-tenancy | ❌ **MISSING** | ⚠️ Manual | ⚠️ Manual | ✅ Namespaces | ✅ Multi-tenant |
+| Metadata Filtering | ✅ MongoDB Query Language | ✅ | ✅ | ✅ | ✅ |
+| Hybrid Search (BM25+Vector) | ❌ **TODO** | ✅ | ✅ | ✅ Sparse-Dense | ✅ |
+| Reranking | ❌ **TODO** | ✅ Cohere | ✅ Multiple | ✅ | ✅ |
+| Multi-tenancy | ✅ X-End-User-ID + TRUSTED_SAs | ⚠️ Manual | ⚠️ Manual | ✅ Namespaces | ✅ Multi-tenant |
 | Document Versioning | ❌ | ⚠️ Manual | ❌ | ❌ | ⚠️ Limited |
 | **Infrastructure** |
 | Cost Optimization | ✅ Hybrid Storage | ❌ | ❌ | ⚠️ Expensive | ⚠️ Expensive |
@@ -614,8 +614,8 @@ CREATE TABLE query_logs (
 **Legend:** ✅ Full Support | ⚠️ Partial/Manual | ❌ Not Available
 
 **Key Takeaways:**
-- **Unique Strengths:** SHA256 deduplication, cost-optimized hybrid storage, multi-cloud portability, comprehensive testing
-- **Critical Gaps:** Metadata filtering, multi-tenancy (P0 - must fix)
+- **Unique Strengths:** SHA256 deduplication, cost-optimized hybrid storage, multi-cloud portability, comprehensive testing, MongoDB-style filtering
+- **Production Ready:** Metadata filtering, multi-tenancy, X-End-User-ID security (Phase 1 COMPLETE)
 - **Competitive Gaps:** Reranking, hybrid search (P1 - should add)
 - **Advanced Features:** Versioning, parent retrieval (P3 - nice to have)
 
@@ -631,19 +631,16 @@ CREATE TABLE query_logs (
    - ✅ Implement filters parameter in query API (MongoDB Query Language)
    - ✅ Add user_id to upload metadata
    - ✅ Update all queries to filter by metadata
-   - ⚠️ Write tests for multi-tenant isolation (in progress)
+   - ✅ Write tests for multi-tenant isolation
    
-2. **Security: X-End-User-ID Access Control** 🔴 P0 TODO
-   - **Problem:** Currently ANY client can impersonate ANY user via X-End-User-ID header
-   - **Solution:** Restrict X-End-User-ID header to trusted service accounts only
-   - **Implementation:**
-     - Add config parameter: `TRUSTED_SERVICE_ACCOUNTS` (list of allowed principals)
-     - Validate JWT: only listed service accounts can set X-End-User-ID
-     - All other requests: X-End-User-ID ignored, use JWT subject instead
-     - Return 403 if unauthorized principal tries to set X-End-User-ID
-   - **Use Case:** Backend services can act on behalf of users, but direct API clients cannot
-   - **Effort:** 2 hours
-   - **Impact:** CRITICAL - prevents impersonation attacks in production
+2. **Security: X-End-User-ID Access Control** ✅ COMPLETED (Dec 15, 2025)
+   - ✅ Added `TRUSTED_SERVICE_ACCOUNTS` config parameter
+   - ✅ JWT validation: only whitelisted service accounts can set X-End-User-ID
+   - ✅ Regular users: X-End-User-ID ignored (403 Forbidden if attempted)
+   - ✅ Unit tests: 4 security tests covering delegation scenarios
+   - ✅ E2E tests: All 30 tests pass with security enabled
+   - ✅ Documentation: README and .env.local.example updated
+   - **Impact:** CRITICAL security fix - prevents impersonation attacks in production
 
 **Deliverable:** Production-ready multi-tenant RAG system with secure user isolation
 
