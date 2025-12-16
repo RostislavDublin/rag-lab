@@ -35,6 +35,11 @@ services:
       # Database connection
       DATABASE_URL: postgresql://raglab:raglab_dev_password@postgres:5432/raglab
       
+      # Reranking configuration (optional - improves search quality)
+      RERANKER_ENABLED: ${RERANKER_ENABLED:-false}
+      RERANKER_TYPE: ${RERANKER_TYPE:-gemini}
+      RERANKER_MODEL: ${RERANKER_MODEL:-gemini-2.0-flash-exp}
+      
       # For development only - mount credentials
       GOOGLE_APPLICATION_CREDENTIALS: /app/service-account-key.json
     ports:

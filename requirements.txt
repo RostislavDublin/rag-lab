@@ -42,8 +42,12 @@ pymupdf_layout==1.26.6  # Improved PDF layout analysis
 pyyaml>=6.0  # YAML parsing and generation (for structured data conversion)
 xmltodict>=0.13.0  # Clean XML to dict conversion
 
-# Optional: Local embeddings (for 100% portability)
-# sentence-transformers>=2.3.0  # Uncomment for local embedding models
+# Optional: Local embeddings and reranking (for 100% portability)
+sentence-transformers>=2.3.0  # Local embeddings + cross-encoder reranking
+torch>=2.0.0  # Required by sentence-transformers
+
+# Optional: Cohere reranking API
+# cohere>=4.0.0  # Uncomment for Cohere Rerank API
 
 # Optional: LangChain integration
 # langchain>=0.1.0

@@ -52,12 +52,19 @@ Set environment variables in `.env` file:
 # .env
 GCP_PROJECT_ID=your-gcp-project
 GCP_LOCATION=us-central1
+GCS_BUCKET=your-bucket-name
+
+# Optional: Enable reranking for better search quality
+RERANKER_ENABLED=true
+RERANKER_TYPE=gemini  # or "local" for offline cross-encoder
+RERANKER_MODEL=gemini-2.0-flash-exp
 ```
 
 Or export before running:
 
 ```bash
 export GCP_PROJECT_ID=your-project-id
+export RERANKER_ENABLED=true
 docker-compose up -d
 ```
 

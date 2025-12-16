@@ -316,7 +316,7 @@ SERVICE_ACCOUNT_EMAIL={sa_email}
 # Vertex AI
 VERTEX_AI_LOCATION={config['GCP_REGION']}
 EMBEDDING_MODEL=text-embedding-005
-EMBEDDING_DIMENSION=1408
+EMBEDDING_DIMENSION=768  # text-embedding-005 max
 """
     
     env_path = Path(__file__).parent.parent / '.env'

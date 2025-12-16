@@ -39,20 +39,16 @@ elif env_file.exists():
 else:
     print("WARNING: No .env.local or .env file found - using system environment variables only")
 
-# Configure logging from environment
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
+# Configure logging: console (brief) + file (detailed)
+from src.logging_config import setup_logging
 
-# Suppress noisy third-party loggers
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("google").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)  # Suppress connection pool warnings
-logging.getLogger("asyncio").setLevel(logging.WARNING)
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+console_level = getattr(logging, log_level, logging.INFO)
+setup_logging(
+    log_file="logs/rag-lab.log",
+    console_level=console_level,
+    file_level=logging.DEBUG  # Always DEBUG in file for troubleshooting
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +57,7 @@ import vertexai
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from google import genai
 from google.genai.types import EmbedContentConfig, HttpOptions
 
@@ -209,6 +205,16 @@ class QueryRequest(BaseModel):
         le=1.0,
         description="Minimum similarity threshold (0.0-1.0). Results below this are filtered out."
     )
+    rerank: bool = Field(
+        default=False,
+        description="Enable cross-encoder reranking for better relevance (adds ~500ms latency)"
+    )
+    rerank_candidates: int = Field(
+        default=50,
+        ge=5,
+        le=100,
+        description="Number of candidates to retrieve for reranking (only used if rerank=true)"
+    )
     filters: Optional[dict] = Field(
         default=None,
         description="MongoDB-style metadata filters. Supports: $and, $or, $not, $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $all, $exists",
@@ -239,6 +245,8 @@ class QueryRequest(BaseModel):
                 "query": "contract analysis",
                 "top_k": 5,
                 "min_similarity": 0.7,
+                "rerank": True,
+                "rerank_candidates": 50,
                 "filters": {
                     "$and": [
                         {"user_id": "user123"},
@@ -257,6 +265,8 @@ class QueryRequest(BaseModel):
 
 
 class QueryResultItem(BaseModel):
+    model_config = ConfigDict(exclude_none=True)
+    
     chunk_text: str
     similarity: float
     chunk_index: int
@@ -265,6 +275,8 @@ class QueryResultItem(BaseModel):
     doc_uuid: str
     doc_metadata: dict
     download_url: Optional[str] = None
+    rerank_score: Optional[float] = None
+    rerank_reasoning: Optional[str] = None
 
 
 class QueryResponse(BaseModel):
@@ -606,7 +618,7 @@ async def create_embedding(request: EmbeddingRequest):
         )
 
 
-@app.post("/v1/query", response_model=QueryResponse)
+@app.post("/v1/query", response_model=QueryResponse, response_model_exclude_none=True)
 async def query_rag(
     request: QueryRequest,
     user_email: str = Depends(get_current_user)  # JWT authentication required
@@ -721,55 +733,139 @@ async def query_rag(
         query_embedding = response.embeddings[0].values
         
         # Vector search with optional metadata filtering
+        # If reranking enabled, retrieve more candidates
+        initial_top_k = request.rerank_candidates if request.rerank else request.top_k
+        
         results = await vector_db.search_similar_chunks(
             query_embedding=query_embedding,
-            top_k=request.top_k,
+            top_k=initial_top_k,
             min_similarity=request.min_similarity,
             filters=request.filters
         )
         
+        # Stage 2: Optional reranking with cross-encoder
+        if request.rerank and results:
+            from src.reranking import get_reranker
+            
+            logger.info(f"Reranking requested: {request.rerank}, results count: {len(results)}")
+            reranker = get_reranker(force_reload=False)  # Use cached instance
+            logger.info(f"Reranker instance: {reranker}")
+            
+            if reranker is None:
+                # Reranking requested but not configured
+                logger.warning("Reranking requested but RERANKER_ENABLED=false. Using vector search results.")
+                # Just take top_k from vector results
+                results = results[:request.top_k]
+            else:
+                logger.info(f"Reranking enabled, fetching {len(results)} chunks for reranking")
+                # Fetch chunk texts for reranking (PARALLEL - group by doc_uuid for batch GCS fetch)
+                chunks_by_doc_rerank = {}
+                for idx, result in enumerate(results):
+                    doc_uuid = result["doc_uuid"]
+                    if doc_uuid not in chunks_by_doc_rerank:
+                        chunks_by_doc_rerank[doc_uuid] = []
+                    chunks_by_doc_rerank[doc_uuid].append((idx, result))
+                
+                # Fetch chunks in parallel across documents
+                chunks_for_rerank = [""] * len(results)  # Preallocate with empty strings
+                
+                async def fetch_rerank_chunks(doc_uuid, doc_items):
+                    try:
+                        chunk_indices = [r["chunk_index"] for _, r in doc_items]
+                        chunk_texts = await document_storage.fetch_chunks(doc_uuid, chunk_indices)
+                        for (original_idx, _), text in zip(doc_items, chunk_texts):
+                            chunks_for_rerank[original_idx] = text
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch chunks for reranking: {doc_uuid} - {e}")
+                        # Keep empty strings for failed fetches
+                
+                await asyncio.gather(*[
+                    fetch_rerank_chunks(doc_uuid, doc_items)
+                    for doc_uuid, doc_items in chunks_by_doc_rerank.items()
+                ], return_exceptions=True)
+                
+                # chunk_indices_map is just [0, 1, 2, ...] since we preserve order
+                chunk_indices_map = list(range(len(results)))
+                
+                # Rerank
+                logger.info(f"Reranking {len(chunks_for_rerank)} candidates to top {request.top_k}")
+                rerank_results = await reranker.rerank(
+                    query=request.query,
+                    documents=chunks_for_rerank,
+                    top_k=request.top_k
+                )
+                
+                # Map reranked results back to original results
+                # rerank_results contains indices into chunks_for_rerank
+                reranked_items = []
+                for rr in rerank_results:
+                    original_idx = chunk_indices_map[rr.index]
+                    result = results[original_idx].copy()  # COPY to avoid mutating shared dict!
+                    # Add rerank score and reasoning to result
+                    result["rerank_score"] = rr.score
+                    result["rerank_reasoning"] = rr.reasoning
+                    result["chunk_text"] = rr.text  # Already fetched for reranking
+                    logger.debug(f"Reranked: idx={rr.index} -> original_idx={original_idx}, score={rr.score:.3f}, file={result['filename']}")
+                    reranked_items.append(result)
+                
+                results = reranked_items
+                logger.info(f"Reranking complete: {len(results)} results")
+        
         # Group by document UUID for efficient GCS fetching
+        # (skip if already fetched during reranking)
         chunks_by_doc = {}
         for result in results:
+            # Skip if chunk_text already set (from reranking)
+            if "chunk_text" in result:
+                continue
+            
             doc_uuid = result["doc_uuid"]
             if doc_uuid not in chunks_by_doc:
                 chunks_by_doc[doc_uuid] = []
             chunks_by_doc[doc_uuid].append(result)
         
         # Fetch chunk texts from GCS (parallel across all documents)
-        async def fetch_doc_chunks(doc_uuid, doc_results):
-            try:
-                chunk_indices = [r["chunk_index"] for r in doc_results]
-                chunk_texts = await document_storage.fetch_chunks(doc_uuid, chunk_indices)
-                for result, text in zip(doc_results, chunk_texts):
-                    result["chunk_text"] = text
-            except Exception as e:
-                # If GCS fetch fails, mark chunks with error
-                logger.error(f"Failed to fetch chunks for {doc_uuid}: {e}")
-                for result in doc_results:
-                    result["chunk_text"] = f"[Error: chunk not available - {str(e)}]"
-                    result["fetch_error"] = True
-        
-        # Use return_exceptions to continue even if some documents fail
-        await asyncio.gather(*[
-            fetch_doc_chunks(doc_uuid, doc_results)
-            for doc_uuid, doc_results in chunks_by_doc.items()
-        ], return_exceptions=True)
+        # Skip if no chunks need fetching (all were fetched during reranking)
+        if chunks_by_doc:
+            async def fetch_doc_chunks(doc_uuid, doc_results):
+                try:
+                    chunk_indices = [r["chunk_index"] for r in doc_results]
+                    chunk_texts = await document_storage.fetch_chunks(doc_uuid, chunk_indices)
+                    for result, text in zip(doc_results, chunk_texts):
+                        result["chunk_text"] = text
+                except Exception as e:
+                    # If GCS fetch fails, mark chunks with error
+                    logger.error(f"Failed to fetch chunks for {doc_uuid}: {e}")
+                    for result in doc_results:
+                        result["chunk_text"] = f"[Error: chunk not available - {str(e)}]"
+                        result["fetch_error"] = True
+            
+            # Use return_exceptions to continue even if some documents fail
+            await asyncio.gather(*[
+                fetch_doc_chunks(doc_uuid, doc_results)
+                for doc_uuid, doc_results in chunks_by_doc.items()
+            ], return_exceptions=True)
         
         # Format final response
         # Note: download_url can be obtained separately via GET /v1/documents/{doc_id}/download
         formatted_results = []
         for result in results:
-            formatted_results.append(QueryResultItem(
-                chunk_text=result["chunk_text"],
-                similarity=result["similarity"],
-                chunk_index=result["chunk_index"],
-                filename=result["filename"],
-                original_doc_id=result["original_doc_id"],
-                doc_uuid=result["doc_uuid"],
-                doc_metadata=result["doc_metadata"],
-                download_url=None,  # Use separate endpoint for signed URLs
-            ))
+            item_dict = {
+                "chunk_text": result["chunk_text"],
+                "similarity": result["similarity"],
+                "chunk_index": result["chunk_index"],
+                "filename": result["filename"],
+                "original_doc_id": result["original_doc_id"],
+                "doc_uuid": result["doc_uuid"],
+                "doc_metadata": result["doc_metadata"],
+                "download_url": None,  # Use separate endpoint for signed URLs
+            }
+            # Only include rerank_score and reasoning if they exist (when reranking was used)
+            if "rerank_score" in result:
+                item_dict["rerank_score"] = result["rerank_score"]
+            if "rerank_reasoning" in result:
+                item_dict["rerank_reasoning"] = result["rerank_reasoning"]
+            formatted_results.append(QueryResultItem(**item_dict))
         
         return QueryResponse(
             query=request.query,

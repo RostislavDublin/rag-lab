@@ -133,7 +133,7 @@ GCS_BUCKET={config['GCS_BUCKET']}
 # Vertex AI
 VERTEX_AI_LOCATION={config.get('VERTEX_AI_LOCATION', config['GCP_REGION'])}
 EMBEDDING_MODEL={config.get('EMBEDDING_MODEL', 'text-embedding-005')}
-EMBEDDING_DIMENSION={config.get('EMBEDDING_DIMENSION', '1408')}
+EMBEDDING_DIMENSION={config.get('EMBEDDING_DIMENSION', '768')}  # text-embedding-005 max
 
 # FastAPI
 PORT=8080

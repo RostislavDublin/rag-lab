@@ -1,0 +1,39 @@
+Advanced Information Retrieval Techniques
+
+Introduction
+
+Combined retrieval methods integrate multiple search strategies to improve accuracy and relevance in retrieval-augmented generation frameworks. This document explains the practical implementation of these techniques.
+
+Core Methodology
+
+The combined search approach operates in three stages:
+
+1. Dual Retrieval Phase
+   - Semantic matching via vector embeddings (dense representation)
+   - Lexical matching via BM25 or similar (sparse representation)
+   - Both methods execute concurrently
+
+2. Score Normalization and Fusion
+   - Normalize relevance scores from both retrieval pathways
+   - Merge using weighted average or RRF (Reciprocal Rank Fusion)
+   - Default configuration: 0.7 semantic weight + 0.3 lexical weight
+
+3. LLM-Based Reordering (Optional)
+   - Language model relevance evaluation
+   - Cross-encoder architectures for pairwise assessment
+   - Final sorting by reranking scores
+
+Advantages
+
+- Enhanced recall: lexical matching captures precise term matches overlooked by embeddings
+- Improved precision: semantic understanding interprets user intent beyond literal words
+- Fault tolerance: framework remains functional if either pathway fails
+
+Deployment Requirements
+
+The methodology necessitates:
+- Vector datastore for embedding persistence and approximate nearest neighbor queries
+- Inverted index structure for term-based retrieval
+- Score harmonization to balance both pathways
+
+Benchmark results demonstrate that combined retrieval approaches typically deliver 15-20% superior accuracy versus single-strategy methods in production retrieval-augmented generation environments.

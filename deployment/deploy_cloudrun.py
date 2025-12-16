@@ -110,7 +110,7 @@ def build_and_deploy(config: dict) -> str:
         f"DATABASE_URL={config['DATABASE_URL']}",
         f"VERTEX_AI_LOCATION={config.get('VERTEX_AI_LOCATION', region)}",
         f"EMBEDDING_MODEL={config.get('EMBEDDING_MODEL', 'text-embedding-005')}",
-        f"EMBEDDING_DIMENSION={config.get('EMBEDDING_DIMENSION', '1408')}",
+        f"EMBEDDING_DIMENSION={config.get('EMBEDDING_DIMENSION', '768')}",
     ]
     
     # Build command
