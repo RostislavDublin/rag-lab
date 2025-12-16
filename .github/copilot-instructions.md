@@ -24,6 +24,39 @@
 
 Active learning project - experimentation and prototyping phase.
 
+## 📚 GETTING STARTED WITH PROJECT DOCUMENTATION
+
+**When starting work in this project for the first time or after a long break:**
+
+1. **ALWAYS read the main README.md first** (`/Users/Rostislav_Dublin/src/drs/ai/rag-lab/README.md`)
+   - Provides project overview, architecture, features, quick start
+   - Contains links to ALL topic-specific documentation
+
+2. **Read ALL topic documentation from README links:**
+   - `docs/development.md` - Local setup, configuration, environment variables, logging
+   - `docs/deployment.md` - Cloud Run deployment, infrastructure, cost estimates
+   - `docs/api.md` - REST API reference, MongoDB filters, all endpoints
+   - `docs/authentication.md` - JWT/JWKS, service delegation, multi-tenancy
+   - `docs/testing.md` - Test guide, workflow, fixtures, CI/CD
+   - `docs/file-validation.md` - 3-tier validation, magic bytes, security
+   - `docs/reranking.md` - LLM reranking implementation, performance optimization
+   - `tests/e2e/README.md` - End-to-end test workflow, markers, iterative development
+
+3. **During active work: focus on relevant topic document**
+   - Working on API changes? → Reference `docs/api.md`
+   - Setting up local dev? → Reference `docs/development.md`
+   - Writing tests? → Reference `docs/testing.md`
+   - Implementing auth? → Reference `docs/authentication.md`
+   - Deploying to Cloud Run? → Reference `docs/deployment.md`
+   - Adding file validation? → Reference `docs/file-validation.md`
+   - Optimizing reranking? → Reference `docs/reranking.md`
+
+**Why this matters:**
+- Documentation is split into focused topic documents (README was restructured from 1480 lines to 8 focused files)
+- Each document contains complete, detailed information for its domain
+- Main README is now a navigation hub, not a comprehensive guide
+- Reading only README without following links = missing critical context
+
 ## 🚨 LOCAL DEVELOPMENT - ABSOLUTE IRON RULES 🚨
 
 **READ THIS BEFORE EVERY SERVER START! NO EXCEPTIONS!**
