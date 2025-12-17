@@ -340,44 +340,51 @@ return reranked[:5]  # Top 5 after reranking
 
 ---
 
-### 3. **Hybrid Search (BM25 + Vector)** 🟡 MEDIUM
-**Priority:** P2 (Should Have - Next Month)  
-**Effort:** 8 hours  
-**Impact:** MEDIUM - Better for exact matches
+### 3. **Hybrid Search (BM25 + Vector)** � IN PROGRESS
+**Priority:** P0 (Current Sprint - Week of Dec 16-22, 2025)  
+**Effort:** 17-26 hours (5 phases)  
+**Impact:** HIGH - Better retrieval quality for keyword + semantic queries  
+**Blueprint:** [docs/hybrid-search.md](docs/hybrid-search.md) ← **Detailed design document**
+
+**Current Status:** 📝 Design Complete → 🚧 Starting Phase 1 (Core BM25 Module)
 
 **Problem:**  
-Pure vector search fails on:
+Pure vector search struggles with:
 - Exact product names ("iPhone 16 Pro Max")
 - Codes/IDs ("INV-2025-001234")
 - Proper nouns ("John Smith", "Microsoft Azure")
+- Technical terms that must match exactly ("Kubernetes", "PostgreSQL")
 
 **Solution:**  
-Combine BM25 (keyword-based) + Vector (semantic):
+Hybrid search combining:
+- **Vector search** (chunk-level, semantic similarity)
+- **Simplified BM25** (document-level, keyword matching, no global IDF)
+- **RRF fusion** (Reciprocal Rank Fusion to combine rankings)
+- **LLM keywords** (compensate missing IDF with semantic importance)
+
+**Architecture:**
 ```
-Final Score = 0.7 × vector_similarity + 0.3 × bm25_score
-```
+Upload Flow:
+  1. Extract text → chunk → generate embeddings
+  2. LLM generates summary (2-3 sentences) + keywords (10-15 terms)
+  3. Save to PostgreSQL: summary, keywords, token_count
+  4. Compute term_frequencies for full document
+  5. Save to GCS: bm25_doc_index.json (only term_frequencies!)
 
-**PostgreSQL Implementation:**
-```sql
--- Enable extensions
-CREATE EXTENSION pg_trgm;
-
--- Add text search column
-ALTER TABLE document_chunks ADD COLUMN text_search tsvector;
-CREATE INDEX idx_text_search ON document_chunks USING gin(text_search);
-
--- Hybrid query
-SELECT *,
-    (0.7 * (1 - (embedding <=> $query_vector)) +
-     0.3 * ts_rank(text_search, to_tsquery($query_keywords))) as score
-FROM document_chunks
-ORDER BY score DESC
-LIMIT 10;
+Search Flow:
+  1. Vector search (top-100 chunks, PostgreSQL)
+  2. Fetch bm25_doc_index.json from GCS (parallel batch)
+  3. BM25 scoring with keyword boosting (1.5x for LLM keywords)
+  4. RRF fusion: score = Σ 1/(60 + rank_i)
+  5. Optional cross-encoder reranking (existing)
 ```
 
 **Benefits:**
-- ✅ Best of both worlds
-- ✅ Handles exact + semantic matches
+- ✅ Best of both worlds (semantic + keyword)
+- ✅ No distributed state (Simplified BM25, no global IDF)
+- ✅ Summary in search results (better UX)
+- ✅ Keyword filtering ready (`WHERE 'Kubernetes' = ANY(keywords)`)
+- ✅ Existing filter_parser compatible
 - ✅ No external dependencies
 
 ---
