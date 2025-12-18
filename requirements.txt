@@ -13,6 +13,7 @@ python-multipart>=0.0.6
 # Data processing
 pandas>=2.0.0
 numpy>=1.24.0
+nltk>=3.8.0  # Natural Language Toolkit for stemming/tokenization
 
 # Vector operations
 faiss-cpu>=1.7.4

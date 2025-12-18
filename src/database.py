@@ -76,6 +76,9 @@ class VectorDB:
                     uploaded_at TIMESTAMP NOT NULL,
                     uploaded_via TEXT DEFAULT 'api',
                     metadata JSONB DEFAULT '{}',
+                    summary TEXT,
+                    keywords TEXT[],
+                    token_count INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -121,7 +124,22 @@ class VectorDB:
                 ON original_documents (file_type)
             """)
             
-            logger.info("Database schema initialized (GCS + UUID + system columns + metadata filtering)")
+            # MIGRATION: Add hybrid search columns if they don't exist (for existing tables)
+            # Must be BEFORE creating GIN index on keywords!
+            await conn.execute("""
+                ALTER TABLE original_documents 
+                ADD COLUMN IF NOT EXISTS summary TEXT,
+                ADD COLUMN IF NOT EXISTS keywords TEXT[],
+                ADD COLUMN IF NOT EXISTS token_count INTEGER
+            """)
+            
+            # GIN index for keywords array (hybrid search filtering)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_documents_keywords 
+                ON original_documents USING gin(keywords)
+            """)
+            
+            logger.info("Database schema initialized (GCS + UUID + system columns + metadata filtering + hybrid search)")
     
     async def check_document_exists(self, file_hash: str) -> Optional[Tuple[int, str, str]]:
         """
@@ -152,6 +170,9 @@ class VectorDB:
         uploaded_at,  # datetime object
         uploaded_via: str = "api",
         metadata: Optional[dict] = None,
+        summary: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
+        token_count: Optional[int] = None,
     ) -> Tuple[int, str]:
         """
         Insert original document metadata (files stored in GCS)
@@ -165,6 +186,9 @@ class VectorDB:
             uploaded_at: Upload timestamp
             uploaded_via: Upload source (api, cli, etc.)
             metadata: User-defined metadata only (no system fields)
+            summary: LLM-generated summary (2-3 sentences)
+            keywords: LLM-extracted keywords (10-15 terms)
+            token_count: Number of tokens in document (for BM25 normalization)
         
         Returns:
             Tuple of (document_id, doc_uuid)
@@ -174,8 +198,9 @@ class VectorDB:
                 """
                 INSERT INTO original_documents 
                     (filename, file_type, file_size, file_hash, 
-                     uploaded_by, uploaded_at, uploaded_via, metadata)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     uploaded_by, uploaded_at, uploaded_via, metadata,
+                     summary, keywords, token_count)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 RETURNING id, doc_uuid
                 """,
                 filename,
@@ -186,6 +211,9 @@ class VectorDB:
                 uploaded_at,
                 uploaded_via,
                 json.dumps(metadata) if metadata else json.dumps({}),
+                summary,
+                keywords if keywords else [],
+                token_count,
             )
             return row["id"], str(row["doc_uuid"])
     

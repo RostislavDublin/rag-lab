@@ -1,4 +1,5 @@
 """Logging configuration with console and rotating file handlers"""
+import glob
 import logging
 import sys
 from datetime import datetime
@@ -14,7 +15,7 @@ def setup_logging(log_file: str = "logs/rag-lab.log", console_level: int = loggi
     
     Rotation policy:
     - New log file on each server restart (timestamp-based naming)
-    - Keep last 10 log files
+    - Keep last 5 log files (auto-cleanup on startup)
     - Auto-rotate when file reaches 10MB
     
     Args:
@@ -25,6 +26,17 @@ def setup_logging(log_file: str = "logs/rag-lab.log", console_level: int = loggi
     # Create logs directory if needed
     log_path = Path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Cleanup old log files - keep only last 5
+    log_pattern = str(log_path.parent / f"{log_path.stem}_*.log")
+    existing_logs = sorted(glob.glob(log_pattern), reverse=True)  # Newest first
+    if len(existing_logs) >= 5:
+        # Delete oldest logs beyond retention limit
+        for old_log in existing_logs[4:]:  # Keep first 4, delete rest
+            try:
+                Path(old_log).unlink()
+            except OSError:
+                pass  # Ignore deletion errors
     
     # Create timestamped log filename for new session
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

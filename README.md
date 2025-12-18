@@ -2,6 +2,7 @@
 
 Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Hybrid storage**: PostgreSQL for embeddings, GCS for documents (8.5x cheaper)
+- **Hybrid search Phase 2**: BM25 index generation with Snowball stemming, LLM summary/keywords extraction
 - **LLM reranking**: Gemini-powered async batch reranking with reasoning (7-8s for 20 docs)
 - **UUID-based**: Globally unique, immutable document identifiers
 - **Deduplication**: SHA256 file hashing prevents duplicate uploads
@@ -12,7 +13,7 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
 - **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
-- **Comprehensive testing**: 162 tests (37 e2e, 13 integration, 112 unit including auth/filter parser/reranking/file validation)
+- **Comprehensive testing**: 194 tests (37 e2e, 23 integration, 134 unit - all passing)
 
 ## Documentation
 
@@ -50,7 +51,7 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
 
 ### Hybrid Storage Architecture
 
-**PostgreSQL (Cloud SQL):** Embeddings + Metadata only
+**PostgreSQL (Cloud SQL):** Embeddings + Metadata + Hybrid Search Fields
 ```sql
 original_documents                 document_chunks
 ─────────────────                 ────────────────
@@ -65,19 +66,22 @@ uploaded_at (TIMESTAMP)   │
 uploaded_via (TEXT)       │
 metadata (JSONB)          │  ← User-defined fields only
 chunk_count               │     (department, tags, priority, etc.)
-                          │     System fields are columns
+summary (TEXT)            │     System fields are columns
+keywords (TEXT[])         │  ← GIN indexed for fast filtering
+token_count (INTEGER)     │  ← For BM25 length normalization
                           │
                           └── UNIQUE, globally unique identifier
 ```
 
-**Google Cloud Storage:** Documents + Text + Chunks
+**Google Cloud Storage:** Documents + Text + Chunks + BM25 Index
 ```
 gs://raglab-documents/
-└── {doc_uuid}/              # UUID-based flat structure
-    ├── document.pdf         # Original PDF file
-    ├── extracted.txt        # Full extracted text
+└── {doc_uuid}/                   # UUID-based flat structure
+    ├── document.pdf              # Original PDF file
+    ├── extracted.txt             # Full extracted text
+    ├── bm25_doc_index.json       # BM25 term frequencies (1-5KB)
     └── chunks/
-        ├── 000.json        # {"text": "...", "index": 0, "metadata": {...}}
+        ├── 000.json             # {"text": "...", "index": 0, "metadata": {...}}
         ├── 001.json
         └── ...
 ```

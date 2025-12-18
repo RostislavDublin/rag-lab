@@ -60,6 +60,7 @@ class DocumentStorage:
         extracted_text: str,
         chunks: List[dict],
         file_type: str = "pdf",
+        bm25_index: Optional[dict] = None,
     ):
         """
         Upload all document artifacts to GCS
@@ -70,6 +71,7 @@ class DocumentStorage:
             extracted_text: Extracted text
             chunks: List of chunk dicts with 'text' and 'index' fields
             file_type: File type ('pdf' or 'txt')
+            bm25_index: BM25 term frequencies dict (optional, for hybrid search)
         
         Note: Always saves original file as 'document.pdf' regardless of actual type.
         The real filename is stored in PostgreSQL metadata.
@@ -93,7 +95,16 @@ class DocumentStorage:
             content_type="text/plain"
         ))
         
-        # 3. Upload all chunks (parallel)
+        # 3. Upload BM25 index (if provided for hybrid search)
+        if bm25_index:
+            bm25_json = json.dumps(bm25_index, ensure_ascii=False)
+            tasks.append(self._upload(
+                path=f"{doc_uuid}/bm25_doc_index.json",
+                content=bm25_json.encode('utf-8'),
+                content_type="application/json"
+            ))
+        
+        # 4. Upload all chunks (parallel)
         for chunk in chunks:
             chunk_json = json.dumps({
                 "text": chunk["text"],

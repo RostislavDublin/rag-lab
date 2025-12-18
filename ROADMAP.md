@@ -1,8 +1,8 @@
 # RAG Lab - Product Roadmap
 
-**Last Updated:** December 13, 2025  
+**Last Updated:** December 18, 2025  
 **Current Version:** 0.2.0  
-**Status:** Production-ready with core features + metadata filtering, missing industry-standard advanced features
+**Status:** Production-ready with core features + metadata filtering + hybrid search Phase 2 (upload integration complete), Phase 3 (query integration) pending
 
 ---
 
@@ -19,12 +19,13 @@
 - ✅ SHA256 deduplication (prevents duplicate document uploads)
 - ✅ Hybrid storage architecture (PostgreSQL for embeddings, GCS for documents - 8.5x cost savings)
 - ✅ Metadata filtering (MongoDB Query Language with 12 operators: $and, $or, $not, $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $all, $exists)
+- ✅ **Hybrid Search Phase 2 (Upload Integration):** BM25 index generation, LLM summary/keywords extraction, PostgreSQL schema migration (summary TEXT, keywords TEXT[], token_count INTEGER + GIN index), GCS bm25_doc_index.json storage, Snowball stemming with stopwords filtering
 
 **Infrastructure & Operations:**
 - ✅ Cloud Run deployment with auto-scaling
 - ✅ Multi-cloud portable (works on GCP, AWS, Azure with PostgreSQL)
 - ✅ Cost-optimized ($7-12/month for 10k documents)
-- ✅ Comprehensive testing (122 tests: 29 filter parser unit, 64 models/utils unit, 29 e2e with metadata filtering)
+- ✅ Comprehensive testing (194 tests: 134 unit, 23 integration, 37 e2e - all passing)
 - ✅ Local development workflow with hot reload
 - ✅ File validation (3-tier: strict for PDF, structured for JSON/XML, lenient for text)
 
@@ -340,13 +341,25 @@ return reranked[:5]  # Top 5 after reranking
 
 ---
 
-### 3. **Hybrid Search (BM25 + Vector)** � IN PROGRESS
+### 3. **Hybrid Search (BM25 + Vector)** ✅ Phase 2 COMPLETE | ⏳ Phase 3 PENDING
 **Priority:** P0 (Current Sprint - Week of Dec 16-22, 2025)  
-**Effort:** 17-26 hours (5 phases)  
+**Effort:** 17-26 hours total (5 phases) | **Phase 2: 8 hours DONE** | **Phase 3: 4-6 hours remaining**  
 **Impact:** HIGH - Better retrieval quality for keyword + semantic queries  
 **Blueprint:** [docs/hybrid-search.md](docs/hybrid-search.md) ← **Detailed design document**
 
-**Current Status:** 📝 Design Complete → 🚧 Starting Phase 1 (Core BM25 Module)
+**Current Status:** ✅ Phase 2 Complete (Upload Integration) → 🚧 Phase 3 Next (Query Integration)
+
+**Phase 2 Completed (December 17-18, 2025):**
+- ✅ Database schema migration: summary TEXT, keywords TEXT[], token_count INTEGER
+- ✅ GIN index on keywords array for fast filtering
+- ✅ BM25 tokenizer with Snowball stemming (nltk) + stopwords filtering (34 words)
+- ✅ BM25 index builder: document-level term frequency aggregation
+- ✅ LLM extraction: Gemini 2.0 Flash Lite for summary + keywords (~$0.0004/doc)
+- ✅ GCS upload: bm25_doc_index.json (1-5KB per document)
+- ✅ Upload endpoint integration: full pipeline working
+- ✅ API endpoints updated: /v1/documents returns summary/keywords/token_count
+- ✅ Log retention fix: keeps last 5 files (was accumulating 50+)
+- ✅ All tests passing: 194 passed (134 unit, 23 integration, 37 e2e)
 
 **Problem:**  
 Pure vector search struggles with:
@@ -417,7 +430,58 @@ filters = {
 
 ---
 
-### 5. **Document Updates / Versioning** 🟢 MEDIUM
+### 5. **Schema Migration System** 🟡 HIGH
+**Priority:** P1 (Next Quarter - Infrastructure Improvement)  
+**Effort:** 12-16 hours  
+**Impact:** HIGH - Production operations requirement
+
+**Problem:**  
+Currently using `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN IF NOT EXISTS` in application code (`init_schema()`).
+Issues:
+- Schema changes mixed with application runtime
+- No version tracking
+- No rollback capability
+- Difficult to test migrations
+- Cannot verify schema state before deployment
+
+**Solution:**  
+Implement versioned migration system:
+
+**PostgreSQL Migrations:**
+- **Tool:** Alembic (industry standard for async Python + PostgreSQL)
+- **Versions:** Track in `alembic_version` table
+- **Migrations:** `deployment/migrations/versions/001_initial.py`, `002_hybrid_search.py`
+- **Commands:** `alembic upgrade head`, `alembic downgrade -1`
+
+**GCS Schema Versioning:**
+- **Metadata:** `gs://bucket/.schema_version.json` → `{"version": 2, "updated_at": "2025-12-17"}`
+- **Migrations:** `deployment/migrations/gcs/001_initial_structure.py`, `002_add_bm25_index.py`
+- **Runner:** Custom script checks version, applies needed migrations
+
+**Migration Workflow:**
+```bash
+# 1. Deploy infrastructure (once)
+./deployment/setup-infrastructure.sh
+
+# 2. Run migrations (separate step, before app deploy)
+alembic upgrade head                    # PostgreSQL
+python deployment/migrate_gcs.py        # GCS schema
+
+# 3. Deploy application (uses ready schema, no init_schema())
+./deployment/deploy-cloudrun.sh
+```
+
+**Benefits:**
+- ✅ Separation of concerns (provisioning vs runtime)
+- ✅ Version tracking and history
+- ✅ Rollback capability
+- ✅ Testable migrations (can test on staging)
+- ✅ Schema drift detection
+- ✅ Team collaboration (clear migration history in git)
+
+---
+
+### 6. **Document Updates / Versioning** 🟢 MEDIUM
 **Priority:** P3 (Nice to Have - Backlog)  
 **Effort:** 8 hours  
 **Impact:** MEDIUM - Needed for evolving documents

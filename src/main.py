@@ -315,6 +315,10 @@ class DocumentInfo(BaseModel):
     uploaded_at: str = Field(..., description="Upload timestamp (ISO 8601)")
     uploaded_via: str = Field(default="api", description="Upload source (api, cli, etc.)")
     metadata: dict = Field(default_factory=dict, description="User-defined metadata only (department, tags, priority, etc.)")
+    # Phase 2: Hybrid search fields
+    summary: Optional[str] = Field(None, description="LLM-generated document summary")
+    keywords: Optional[List[str]] = Field(None, description="LLM-extracted keywords")
+    token_count: Optional[int] = Field(None, description="Total token count for BM25 normalization")
 
 
 class DocumentListResponse(BaseModel):
@@ -462,6 +466,7 @@ async def upload_document(
         # Prepare chunks for GCS
         gcs_chunks = []
         embeddings_only = []
+        chunk_texts = []  # For BM25 index building
         
         for chunk_text, embedding, chunk_metadata in chunks_data:
             gcs_chunks.append({
@@ -470,14 +475,40 @@ async def upload_document(
                 "metadata": chunk_metadata
             })
             embeddings_only.append(embedding)
+            chunk_texts.append(chunk_text)
+        
+        # ========================================================================
+        # BM25 HYBRID SEARCH: Build index + extract summary/keywords via LLM
+        # ========================================================================
+        from src.bm25 import build_bm25_index, extract_summary_and_keywords, tokenize
+        
+        # Build BM25 term frequency index from chunks
+        bm25_index = build_bm25_index(chunk_texts)
+        logger.debug(f"Built BM25 index: {len(bm25_index['term_frequencies'])} unique terms")
+        
+        # Extract summary + keywords via Gemini LLM (async, ~$0.0004 per doc)
+        llm_result = await extract_summary_and_keywords(
+            text=extracted_text,
+            genai_client=genai_client
+        )
+        summary = llm_result.get("summary", "")
+        keywords = llm_result.get("keywords", [])
+        
+        # Compute token count for BM25 length normalization
+        token_count = len(tokenize(extracted_text))
+        
+        logger.info(
+            f"Hybrid search fields: summary={len(summary)} chars, "
+            f"keywords={len(keywords)} terms, tokens={token_count}"
+        )
+        # ========================================================================
         
         # Create DB record (generates UUID) - AFTER validation
         # Parse and merge custom metadata with system metadata
         custom_metadata = {}
         if metadata:
             try:
-                import json as json_module
-                custom_metadata = json_module.loads(metadata)
+                custom_metadata = json.loads(metadata)
                 if not isinstance(custom_metadata, dict):
                     raise ValueError("Metadata must be a JSON object")
             except Exception as e:
@@ -521,6 +552,9 @@ async def upload_document(
             uploaded_at=datetime.utcnow(),
             uploaded_via="api",
             metadata=filtered_metadata,  # Only user-defined fields
+            summary=summary,  # LLM-generated summary
+            keywords=keywords,  # LLM-extracted keywords
+            token_count=token_count,  # For BM25 length normalization
         )
         logger.info(f"Created document record: ID={doc_id}, UUID={doc_uuid}, user={user_email}, metadata={list(custom_metadata.keys())}")
         
@@ -531,7 +565,8 @@ async def upload_document(
                 pdf_bytes=file_content,
                 extracted_text=extracted_text,
                 chunks=gcs_chunks,
-                file_type=file_type
+                file_type=file_type,
+                bm25_index=bm25_index  # BM25 term frequencies for hybrid search
             )
             logger.debug(f"Uploaded {len(gcs_chunks)} files to GCS: {doc_uuid}/")
             
@@ -1039,7 +1074,8 @@ async def get_document_by_hash(file_hash: str):
         
         async with vector_db.pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT id, doc_uuid, filename, file_type, file_size, file_hash, chunk_count, uploaded_at
+                SELECT id, doc_uuid, filename, file_type, file_size, file_hash, chunk_count, uploaded_at,
+                       uploaded_by, uploaded_via, metadata, summary, keywords, token_count
                 FROM original_documents
                 WHERE file_hash = $1
             """, file_hash.lower())
@@ -1059,6 +1095,12 @@ async def get_document_by_hash(file_hash: str):
             file_hash=row["file_hash"],
             chunk_count=row["chunk_count"],
             uploaded_at=row["uploaded_at"].isoformat(),
+            uploaded_by=row["uploaded_by"],
+            uploaded_via=row["uploaded_via"],
+            metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else (row["metadata"] or {}),
+            summary=row["summary"],
+            keywords=row["keywords"],
+            token_count=row["token_count"],
         )
     
     except HTTPException:
@@ -1085,7 +1127,8 @@ async def list_documents():
             rows = await conn.fetch("""
                 SELECT 
                     id, doc_uuid, filename, file_type, file_size, file_hash,
-                    chunk_count, uploaded_by, uploaded_at, uploaded_via, metadata
+                    chunk_count, uploaded_by, uploaded_at, uploaded_via, metadata,
+                    summary, keywords, token_count
                 FROM original_documents
                 ORDER BY uploaded_at DESC
             """)
@@ -1103,6 +1146,9 @@ async def list_documents():
                 uploaded_at=row["uploaded_at"].isoformat(),
                 uploaded_via=row["uploaded_via"],
                 metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else (row["metadata"] or {}),
+                summary=row["summary"],
+                keywords=row["keywords"],
+                token_count=row["token_count"],
             )
             for row in rows
         ]
@@ -1135,7 +1181,8 @@ async def get_document(doc_id: int):
                 """
                 SELECT 
                     id, doc_uuid, filename, file_type, file_size, file_hash,
-                    chunk_count, uploaded_by, uploaded_at, uploaded_via, metadata
+                    chunk_count, uploaded_by, uploaded_at, uploaded_via, metadata,
+                    summary, keywords, token_count
                 FROM original_documents
                 WHERE id = $1
                 """,
@@ -1160,6 +1207,9 @@ async def get_document(doc_id: int):
             uploaded_at=row["uploaded_at"].isoformat(),
             uploaded_via=row["uploaded_via"],
             metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else (row["metadata"] or {}),
+            summary=row["summary"],
+            keywords=row["keywords"],
+            token_count=row["token_count"],
         )
     
     except HTTPException:
