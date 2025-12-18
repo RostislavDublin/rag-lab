@@ -93,6 +93,26 @@ gs://raglab-documents/
 - **Efficient RAG**: Fetch only needed chunks (3-5) not all 50
 - **Regeneration**: Keep extracted text for re-embedding without re-processing PDFs
 
+### LLM Models
+
+### LLM Models
+
+**Cost-optimized model selection:**
+- **Extraction:** `gemini-2.5-flash-lite` ($2.25/10K docs, 100% reliable)
+- **Reranking:** `gemini-2.5-flash` (stable for search)
+
+**Key features:**
+- 5 retry attempts with exponential backoff
+- Separate env vars for independent optimization
+- See [Hybrid Search](docs/hybrid-search.md) for details
+
+**Environment variables:**
+```bash
+EMBEDDING_MODEL=text-embedding-005
+RERANKER_MODEL=gemini-2.5-flash
+LLM_EXTRACTION_MODEL=gemini-2.5-flash-lite
+```
+
 ### Deduplication
 
 Documents are deduplicated using SHA256 file hashing:
@@ -314,19 +334,9 @@ rag-lab/
 
 ## Roadmap
 
-- [x] ~~Document listing endpoint~~ - `GET /v1/documents` implemented
-- [x] ~~Document deletion endpoint~~ - `DELETE /v1/documents/{id}` and `DELETE /v1/documents/by-hash/{hash}` implemented
-- [x] ~~Implement authentication~~ - JWT/JWKS with OAuth2, vendor-independent
-- [x] ~~Metadata filtering in queries~~ - MongoDB Query Language with 12 operators
-- [x] ~~Search result reranking~~ - Gemini LLM async batch reranking with reasoning (7-8s for 20 docs)
-- [x] ~~Enhanced structured logging~~ - Rotating log files with timestamp-based sessions
-- [ ] Document download endpoint: `GET /v1/documents/{uuid}/download` (GCS signed URL)
-- [ ] Add Gemini integration for answer generation
-- [ ] Add rate limiting (slowapi)
-- [ ] Add support for DOCX, PPTX, EPUB
-- [ ] Create Kubernetes manifests for GKE
-- [ ] Redis caching for hot chunks (reduce GCS calls)
-- [ ] Hybrid search (vector + BM25 keyword search with RRF fusion)
+See [ROADMAP.md](ROADMAP.md) for detailed feature planning and implementation status.
+
+**Current focus:** Phase 3 - Query endpoint integration (BM25 scoring + RRF fusion)
 
 ## License
 

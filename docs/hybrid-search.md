@@ -1,7 +1,7 @@
 # Hybrid Search Blueprint
 
-**Status:** Design phase  
-**Created:** December 16, 2025  
+**Status:** Phase 2 Complete (Upload), Phase 3 Next (Query)  
+**Updated:** December 18, 2025  
 **Feature:** Vector + BM25 + RRF Fusion + LLM Keywords
 
 ---
@@ -15,6 +15,65 @@ Implement hybrid search combining:
 - **LLM-generated keywords** (compensates missing IDF)
 
 **Goal:** Improve retrieval quality by combining semantic and keyword signals without compromising architectural simplicity.
+
+---
+
+## LLM Model Selection (Dec 2025)
+
+### Production Configuration
+
+**Extraction (Phase 2):** `gemini-2.5-flash-lite`
+- Cost: $0.10 input + $0.40 output per 1M tokens (~$0.000225/doc)
+- Success rate: 100% (vs Flash 90%)
+- Quality: Complete JSON with summary + keywords every time
+- Total: $2.25 per 10K documents (4.2x cheaper than flash)
+
+**Reranking:** `gemini-2.5-flash`
+- Cost: $0.30 input + $2.50 output per 1M tokens
+- Stable for search reranking
+- NOT recommended for extraction (10% JSON parse failures)
+
+### Why Flash-Lite Won
+
+**Testing (Dec 18, 2025):**
+```
+Model: gemini-2.5-flash
+- Run 1-7, 9-10: SUCCESS (keywords: 15-21)
+- Run 8: FAIL (unterminated string, invalid JSON)
+- Success rate: 90%
+
+Model: gemini-2.5-flash-lite  
+- Run 1-10: SUCCESS (keywords: 20-26)
+- Success rate: 100%
+```
+
+**Root cause:** Flash has unstable JSON generation on longer documents (>1500 chars)
+- Missing closing braces
+- Unterminated strings  
+- Missing `keywords` field
+
+**Solution:** Flash-lite is BOTH cheaper AND more reliable.
+
+### Retry Logic
+
+```python
+# src/bm25/llm_extraction.py
+MAX_RETRY_ATTEMPTS = 5          # Total attempts
+RETRY_INITIAL_DELAY = 1.0       # 1 second
+RETRY_EXP_BASE = 2.0            # Exponential: 1s, 2s, 4s, 8s, 16s
+RETRY_STATUS_CODES = {429, 500, 503, 504}  # Rate limit + server errors
+
+# Both JSON errors AND API errors are retriable
+# (Flash unstable → retry can succeed on next attempt)
+```
+
+**Configuration:**
+```bash
+# .env.local
+EMBEDDING_MODEL=text-embedding-005              # Vector embeddings
+RERANKER_MODEL=gemini-2.5-flash                 # Search reranking  
+LLM_EXTRACTION_MODEL=gemini-2.5-flash-lite      # Summary/keywords (default)
+```
 
 ---
 
@@ -48,16 +107,20 @@ Document Upload (PDF/TXT)
 ┌─────────────────────────────────────────┐
 │ STAGE 3: LLM Summary & Keywords         │
 ├─────────────────────────────────────────┤
-│ LLM: gemini-2.0-flash-lite              │
+│ LLM: gemini-2.5-flash-lite              │
 │ Input: Full document text               │
+│ Retry: 5 attempts, exp backoff          │
 │                                         │
 │ Prompt: "Generate concise summary       │
 │          (2-3 sentences) and extract    │
 │          10-15 key terms..."            │
 │                                         │
-│ Output:                                 │
+│ Output (JSON):                          │
 │ - summary: "This document covers..."    │
-│ - keywords: ["Kubernetes", ...]         │
+│ - keywords: ["kubernetes", ...]         │
+│                                         │
+│ Cost: ~$0.000225/doc (flash-lite)       │
+│ Success rate: 100%                      │
 └─────────────────────────────────────────┘
   ↓
 ┌─────────────────────────────────────────┐

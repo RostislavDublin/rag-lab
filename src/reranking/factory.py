@@ -61,7 +61,7 @@ class RerankingFactory:
             if reranker_type == "gemini":
                 # Gemini LLM-based reranking (Google's recommended approach)
                 if not model:
-                    model = "gemini-2.0-flash-exp"  # Default Gemini model
+                    model = "gemini-2.5-flash"  # Default Gemini model
                 logger.info(f"Creating Gemini LLM reranker: {model}")
                 # Support both GOOGLE_CLOUD_PROJECT and GCP_PROJECT_ID env vars
                 project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")

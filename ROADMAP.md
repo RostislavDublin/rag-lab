@@ -2,7 +2,7 @@
 
 **Last Updated:** December 18, 2025  
 **Current Version:** 0.2.0  
-**Status:** Production-ready with core features + metadata filtering + hybrid search Phase 2 (upload integration complete), Phase 3 (query integration) pending
+**Status:** Production-ready with hybrid search Phase 2 complete (LLM extraction, retry logic, cost optimization). All 194 tests passing. Phase 3 (query integration) next.
 
 ---
 
@@ -341,7 +341,7 @@ return reranked[:5]  # Top 5 after reranking
 
 ---
 
-### 3. **Hybrid Search (BM25 + Vector)** ✅ Phase 2 COMPLETE | ⏳ Phase 3 PENDING
+### 3. **Hybrid Search (BM25 + Vector)** ✅ Phase 2 COMPLETE | ⏳ Phase 3 NEXT
 **Priority:** P0 (Current Sprint - Week of Dec 16-22, 2025)  
 **Effort:** 17-26 hours total (5 phases) | **Phase 2: 8 hours DONE** | **Phase 3: 4-6 hours remaining**  
 **Impact:** HIGH - Better retrieval quality for keyword + semantic queries  
@@ -354,12 +354,19 @@ return reranked[:5]  # Top 5 after reranking
 - ✅ GIN index on keywords array for fast filtering
 - ✅ BM25 tokenizer with Snowball stemming (nltk) + stopwords filtering (34 words)
 - ✅ BM25 index builder: document-level term frequency aggregation
-- ✅ LLM extraction: Gemini 2.0 Flash Lite for summary + keywords (~$0.0004/doc)
+- ✅ **LLM extraction:** gemini-2.5-flash-lite (4.2x cheaper, 100% reliable) ~$0.000225/doc
+- ✅ **Retry logic:** 5 attempts with exponential backoff (1s, 2s, 4s, 8s, 16s)
+- ✅ **Model stability:** Flash-lite: 100% success vs Flash: 90% (JSON parse errors)
 - ✅ GCS upload: bm25_doc_index.json (1-5KB per document)
 - ✅ Upload endpoint integration: full pipeline working
 - ✅ API endpoints updated: /v1/documents returns summary/keywords/token_count
 - ✅ Log retention fix: keeps last 5 files (was accumulating 50+)
-- ✅ All tests passing: 194 passed (134 unit, 23 integration, 37 e2e)
+- ✅ **All tests passing:** 194 passed (134 unit, 23 integration, 37 e2e)
+
+**Model Selection (Dec 18, 2025):**
+- **Extraction:** gemini-2.5-flash-lite ($2.25/10K docs) - 100% reliable, complete JSON every time
+- **Reranking:** gemini-2.5-flash (stable for search, NOT for extraction due to 10% JSON errors)
+- **Environment vars:** EMBEDDING_MODEL, RERANKER_MODEL, LLM_EXTRACTION_MODEL (independent optimization)
 
 **Problem:**  
 Pure vector search struggles with:

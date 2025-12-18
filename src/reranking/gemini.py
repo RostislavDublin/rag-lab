@@ -63,7 +63,7 @@ Respond with ONLY a JSON array in this exact format (no other text):
         Initialize Gemini reranker.
         
         Args:
-            model_name: Gemini model to use (default: gemini-2.0-flash-exp)
+            model_name: Gemini model to use (default: gemini-2.5-flash)
             project_id: GCP project ID (reads from GOOGLE_CLOUD_PROJECT env if not provided)
             location: GCP region (default: us-central1)
             temperature: Model temperature (0.0 = deterministic)
