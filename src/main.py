@@ -19,7 +19,7 @@ import logging
 import os
 import warnings
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from pathlib import Path
 
@@ -78,7 +78,7 @@ GCS_BUCKET = os.getenv("GCS_BUCKET", "raglab-documents")
 
 # Version tracking
 APP_VERSION = "0.2.0"
-APP_START_TIME = datetime.utcnow().isoformat() + "Z"
+APP_START_TIME = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 # Initialize storage with env bucket
 document_storage = DocumentStorage(bucket_name=GCS_BUCKET)
@@ -215,6 +215,10 @@ class QueryRequest(BaseModel):
         le=100,
         description="Number of candidates to retrieve for reranking (only used if rerank=true)"
     )
+    use_hybrid: bool = Field(
+        default=True,
+        description="Enable hybrid search (vector + BM25 + RRF fusion). If false, uses pure vector search."
+    )
     filters: Optional[dict] = Field(
         default=None,
         description="MongoDB-style metadata filters. Supports: $and, $or, $not, $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $all, $exists",
@@ -239,8 +243,8 @@ class QueryRequest(BaseModel):
         ]
     )
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "query": "contract analysis",
                 "top_k": 5,
@@ -262,6 +266,7 @@ class QueryRequest(BaseModel):
                 }
             }
         }
+    )
 
 
 class QueryResultItem(BaseModel):
@@ -653,6 +658,110 @@ async def create_embedding(request: EmbeddingRequest):
         )
 
 
+async def _hybrid_search(request: QueryRequest, query_embedding: List[float]) -> List[dict]:
+    """
+    Hybrid search: Vector + BM25 + RRF Fusion (Variant A: two-stage retrieval)
+    
+    Architecture:
+    1. Vector search retrieves top-100 chunks (semantic filter)
+    2. BM25 scoring on those 100 chunks (keyword relevance)
+    3. RRF fusion combines both rankings
+    4. Optional cross-encoder reranking
+    5. Return top_k results
+    
+    Args:
+        request: Query request with parameters
+        query_embedding: Pre-computed query embedding
+    
+    Returns:
+        List of result dicts with chunk info (texts fetched later)
+    """
+    from src.bm25 import tokenize, SimplifiedBM25, reciprocal_rank_fusion
+    
+    # STAGE 1: Vector search (retrieve more for RRF fusion)
+    hybrid_top_k = 100  # Retrieve top-100 for fusion
+    
+    vector_results = await vector_db.search_similar_chunks(
+        query_embedding=query_embedding,
+        top_k=hybrid_top_k,
+        min_similarity=request.min_similarity,
+        filters=request.filters
+    )
+    
+    if not vector_results:
+        logger.info("No vector results found, returning empty")
+        return []
+    
+    logger.info(f"Hybrid search: got {len(vector_results)} vector results")
+    
+    # STAGE 2: Batch fetch BM25 indices from GCS
+    doc_uuids = list(set(r['doc_uuid'] for r in vector_results))
+    logger.info(f"Fetching BM25 indices for {len(doc_uuids)} unique documents")
+    
+    # Parallel fetch with error handling
+    bm25_fetch_tasks = [
+        document_storage.fetch_bm25_index(uuid)
+        for uuid in doc_uuids
+    ]
+    bm25_indices = await asyncio.gather(*bm25_fetch_tasks, return_exceptions=True)
+    
+    # Build lookup: doc_uuid -> bm25_index (handle errors)
+    bm25_lookup = {}
+    for uuid, index_result in zip(doc_uuids, bm25_indices):
+        if isinstance(index_result, Exception):
+            logger.warning(f"Failed to fetch BM25 index for {uuid}: {index_result}")
+            bm25_lookup[uuid] = {"term_frequencies": {}}
+        else:
+            bm25_lookup[uuid] = index_result
+    
+    # STAGE 3: Compute BM25 scores for each document
+    query_terms = tokenize(request.query)
+    logger.debug(f"Query terms: {query_terms}")
+    
+    scorer = SimplifiedBM25(k1=1.2, b=0.75, avgdl=1000, boost=1.5)
+    doc_bm25_scores = {}
+    
+    for doc_uuid in doc_uuids:
+        # Get metadata from any chunk of this document (all have same doc metadata)
+        doc_chunk = next(r for r in vector_results if r['doc_uuid'] == doc_uuid)
+        
+        bm25_score = scorer.score(
+            query_terms=query_terms,
+            doc_term_frequencies=bm25_lookup[doc_uuid]['term_frequencies'],
+            token_count=doc_chunk['token_count'],
+            keywords=doc_chunk['keywords']
+        )
+        doc_bm25_scores[doc_uuid] = bm25_score
+    
+    # Map BM25 scores to all chunks
+    for chunk in vector_results:
+        chunk['doc_bm25_score'] = doc_bm25_scores[chunk['doc_uuid']]
+    
+    logger.debug(f"BM25 scores range: {min(doc_bm25_scores.values()):.2f} - {max(doc_bm25_scores.values()):.2f}")
+    
+    # STAGE 4: RRF Fusion
+    # Ranking 1: by vector similarity
+    vector_ranked = sorted(vector_results, key=lambda x: x['similarity'], reverse=True)
+    
+    # Ranking 2: by BM25 score
+    bm25_ranked = sorted(vector_results, key=lambda x: x['doc_bm25_score'], reverse=True)
+    
+    # RRF fusion
+    fused_results = reciprocal_rank_fusion(
+        rankings=[vector_ranked, bm25_ranked],
+        k=60,
+        item_key='chunk_id'
+    )
+    
+    logger.info(f"RRF fusion complete: {len(fused_results)} results")
+    
+    # Take top candidates (rerank_candidates if reranking, else top_k)
+    top_candidates = request.rerank_candidates if request.rerank else request.top_k
+    results = fused_results[:top_candidates]
+    
+    return results
+
+
 @app.post("/v1/query", response_model=QueryResponse, response_model_exclude_none=True)
 async def query_rag(
     request: QueryRequest,
@@ -767,16 +876,22 @@ async def query_rag(
         )
         query_embedding = response.embeddings[0].values
         
-        # Vector search with optional metadata filtering
-        # If reranking enabled, retrieve more candidates
-        initial_top_k = request.rerank_candidates if request.rerank else request.top_k
-        
-        results = await vector_db.search_similar_chunks(
-            query_embedding=query_embedding,
-            top_k=initial_top_k,
-            min_similarity=request.min_similarity,
-            filters=request.filters
-        )
+        # ROUTING: Hybrid search (vector+BM25+RRF) vs pure vector search
+        if request.use_hybrid:
+            logger.info("Using HYBRID search (vector + BM25 + RRF)")
+            results = await _hybrid_search(request, query_embedding)
+        else:
+            logger.info("Using PURE VECTOR search")
+            # Vector search with optional metadata filtering
+            # If reranking enabled, retrieve more candidates
+            initial_top_k = request.rerank_candidates if request.rerank else request.top_k
+            
+            results = await vector_db.search_similar_chunks(
+                query_embedding=query_embedding,
+                top_k=initial_top_k,
+                min_similarity=request.min_similarity,
+                filters=request.filters
+            )
         
         # Stage 2: Optional reranking with cross-encoder
         if request.rerank and results:

@@ -292,6 +292,9 @@ class VectorDB:
                 d.filename,
                 d.file_type,
                 d.metadata as doc_metadata,
+                d.summary,
+                d.keywords,
+                d.token_count,
                 1 - (c.embedding <=> $1::vector) as similarity
             FROM document_chunks c
             JOIN original_documents d ON c.original_doc_id = d.id
@@ -311,6 +314,9 @@ class VectorDB:
                     "filename": row["filename"],
                     "file_type": row["file_type"],
                     "doc_metadata": json.loads(row["doc_metadata"]) if isinstance(row["doc_metadata"], str) else row["doc_metadata"],
+                    "summary": row["summary"],
+                    "keywords": list(row["keywords"]) if row["keywords"] else [],
+                    "token_count": row["token_count"] if row["token_count"] else 1,
                     "similarity": float(row["similarity"]),
                 }
                 for row in rows

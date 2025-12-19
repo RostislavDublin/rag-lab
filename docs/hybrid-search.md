@@ -1,18 +1,24 @@
 # Hybrid Search Blueprint
 
-**Status:** Phase 2 Complete (Upload), Phase 3 Next (Query)  
-**Updated:** December 18, 2025  
+**Status:** Phase 3 Complete (Query Integration)  
+**Updated:** December 19, 2025  
 **Feature:** Vector + BM25 + RRF Fusion + LLM Keywords
 
 ---
 
 ## Overview
 
-Implement hybrid search combining:
-- **Vector search** (semantic similarity, chunk-level)
-- **BM25 search** (keyword matching, document-level)
-- **RRF fusion** (Reciprocal Rank Fusion)
+Hybrid search combining:
+- **Vector search** (semantic similarity, chunk-level) - top-100 retrieval
+- **BM25 search** (keyword matching, document-level) - applied to vector results
+- **RRF fusion** (Reciprocal Rank Fusion) - combines both rankings
 - **LLM-generated keywords** (compensates missing IDF)
+
+**Architecture:** Two-stage retrieval (Variant A)
+- Stage 1: Vector search retrieves top-100 chunks (semantic filter)
+- Stage 2: BM25 scoring on those 100 chunks (keyword relevance)
+- Stage 3: RRF fusion combines both rankings
+- Stage 4: Optional cross-encoder reranking
 
 **Goal:** Improve retrieval quality by combining semantic and keyword signals without compromising architectural simplicity.
 
@@ -481,7 +487,9 @@ Final ranking: [A, C, B, ...]
 
 ### bm25_doc_index.json Schema (GCS)
 
-**Only BM25 term frequencies (minimal!):**
+**IMPORTANT: Only term frequencies stored in GCS!**
+
+All other metadata (summary, keywords, token_count) is stored in PostgreSQL for fast access during vector search. This avoids extra GCS requests and simplifies the architecture.
 
 ```json
 {
@@ -497,8 +505,22 @@ Final ranking: [A, C, B, ...]
 }
 ```
 
+**Storage Split Rationale:**
+
+**PostgreSQL** (fast, accessed during vector search):
+- `summary TEXT` - document summary for UI display
+- `keywords TEXT[]` - LLM-extracted keywords for 1.5x BM25 boost
+- `token_count INTEGER` - document length for BM25 normalization
+
+**GCS** (fetched only for hybrid search):
+- `term_frequencies` - full TF map for BM25 scoring
+
+**Why split?**
+- Vector search already queries PostgreSQL → free metadata access
+- GCS fetch only when hybrid search enabled → cost-effective
+- Batch GCS fetching → efficient parallel retrieval
+
 **Note:** 
-- Summary, keywords, token_count → PostgreSQL (document metadata)
 - doc_uuid → implicit in file path `{doc_uuid}/bm25_doc_index.json`
 - Only term frequencies stored in GCS (pure BM25 index data)
 
@@ -1394,6 +1416,119 @@ text_for_llm = full_text[:max_tokens]
 ```
 
 This is acceptable - important keywords usually in beginning.
+
+---
+
+## API Usage Examples
+
+### Hybrid Search (Default)
+
+```bash
+curl -X POST "http://localhost:8000/v1/query" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ID_TOKEN" \
+  -d '{
+    "query": "kubernetes deployment strategies",
+    "top_k": 5,
+    "use_hybrid": true
+  }'
+```
+
+**Response includes both vector and BM25 signals:**
+```json
+{
+  "query": "kubernetes deployment strategies",
+  "total": 5,
+  "results": [
+    {
+      "chunk_text": "Kubernetes supports multiple deployment strategies...",
+      "similarity": 0.87,
+      "filename": "k8s-guide.pdf",
+      "chunk_index": 12,
+      "doc_uuid": "abc-123",
+      "doc_metadata": {
+        "tags": ["devops", "kubernetes"]
+      }
+    }
+  ]
+}
+```
+
+**Note:** BM25 scores used internally for RRF fusion, not returned in API response.
+
+### Pure Vector Search (Fallback)
+
+```bash
+curl -X POST "http://localhost:8000/v1/query" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ID_TOKEN" \
+  -d '{
+    "query": "kubernetes deployment strategies",
+    "top_k": 5,
+    "use_hybrid": false
+  }'
+```
+
+**When to use pure vector:**
+- Debugging hybrid search
+- Comparing retrieval quality
+- A/B testing
+
+### Hybrid Search + Metadata Filters
+
+```bash
+curl -X POST "http://localhost:8000/v1/query" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ID_TOKEN" \
+  -d '{
+    "query": "deployment best practices",
+    "top_k": 5,
+    "use_hybrid": true,
+    "filters": {
+      "doc_metadata.tags": {"$in": ["kubernetes", "docker"]},
+      "doc_metadata.user_id": "user123"
+    }
+  }'
+```
+
+**Architecture:** Metadata filtering applied during vector search (Stage 1), BM25 scoring only on filtered results.
+
+### Hybrid Search + Reranking
+
+```bash
+curl -X POST "http://localhost:8000/v1/query" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ID_TOKEN" \
+  -d '{
+    "query": "how to rollback deployments",
+    "top_k": 3,
+    "use_hybrid": true,
+    "rerank": true,
+    "rerank_candidates": 10
+  }'
+```
+
+**Full pipeline:**
+1. Vector search → top-100 chunks
+2. BM25 scoring → keyword boost
+3. RRF fusion → combined ranking
+4. Select top-10 candidates
+5. Cross-encoder rerank → final top-3
+
+**Response includes rerank scores:**
+```json
+{
+  "results": [
+    {
+      "chunk_text": "To rollback a deployment in Kubernetes...",
+      "similarity": 0.82,
+      "rerank_score": 0.95,
+      "rerank_reasoning": "Directly answers rollback procedure with kubectl commands",
+      "filename": "k8s-ops.pdf"
+    }
+  ]
+}
+```
 
 ---
 

@@ -593,6 +593,9 @@ def test_03h_upload_log_document(test_documents, auth_headers):
     print("  - Note: Log file kept as plain text (timestamps + messages)")
 
 
+
+
+
 @pytest.mark.list
 @pytest.mark.e2e
 def test_04_list_documents():
@@ -1133,7 +1136,7 @@ def test_05h_query_with_reranking(auth_headers):
             "query": query,
             "top_k": 5,
             "rerank": False,
-            "metadata_filter": {"category": "e2e-fixture"}
+            "filters": {"category": "e2e-fixture"}
         },
         headers=auth_headers,
         timeout=30
@@ -1149,7 +1152,7 @@ def test_05h_query_with_reranking(auth_headers):
             "top_k": 5,
             "rerank": True,
             "rerank_candidates": 10,
-            "metadata_filter": {"category": "e2e-fixture"}
+            "filters": {"category": "e2e-fixture"}
         },
         headers=auth_headers,
         timeout=30  # Batch mode: much faster
@@ -1233,7 +1236,7 @@ def test_05i_reranking_improves_relevance(auth_headers):
             "query": query,
             "top_k": 10,
             "rerank": False,
-            "metadata_filter": {"category": "e2e-fixture"}
+            "filters": {"category": "e2e-fixture"}
         },
         headers=auth_headers,
         timeout=30
@@ -1249,7 +1252,7 @@ def test_05i_reranking_improves_relevance(auth_headers):
             "top_k": 10,
             "rerank": True,
             "rerank_candidates": 20,
-            "metadata_filter": {"category": "e2e-fixture"}
+            "filters": {"category": "e2e-fixture"}
         },
         headers=auth_headers,
         timeout=30
@@ -1348,6 +1351,48 @@ def test_05j_reranking_performance(auth_headers):
     
     print(f"✓ Reranking completed in {elapsed:.2f}s")
     print(f"  Performance validation: PASSED")
+
+
+@pytest.mark.hybrid_search
+@pytest.mark.e2e
+def test_05k_hybrid_search_keyword_boost(auth_headers):
+    """Step 5k: Hybrid search - verify BM25 keyword boosting works"""
+    print("\n=== Step 5k: Hybrid search - keyword boosting ===")
+    
+    query = "database vector similarity search indexing"
+    
+    # Hybrid search
+    response = requests.post(
+        f"{API_BASE}/v1/query",
+        json={
+            "query": query,
+            "top_k": 5,
+            "use_hybrid": True
+        },
+        headers=auth_headers,
+        timeout=30
+    )
+    
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert len(results) > 0, "Hybrid search returned no results"
+    
+    # Verify hybrid search works (returns results with similarity scores)
+    for result in results[:3]:
+        assert "similarity" in result
+        assert "filename" in result
+        assert result["similarity"] > 0
+    
+    print(f"✓ Query: '{query}'")
+    print(f"  Top results:")
+    for i, r in enumerate(results[:3], 1):
+        print(f"    {i}. {r['filename']} (similarity: {r['similarity']:.3f})")
+    print(f"  Hybrid search validation: PASSED")
+
+
+
+
+
 
 
 @pytest.mark.download

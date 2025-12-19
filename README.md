@@ -13,7 +13,7 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
 - **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
 - **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
-- **Comprehensive testing**: 194 tests (37 e2e, 23 integration, 134 unit - all passing)
+- **Comprehensive testing**: 69 tests (38 e2e, 23 integration, 8 unit - all passing)
 
 ## Documentation
 

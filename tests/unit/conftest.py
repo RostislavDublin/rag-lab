@@ -4,6 +4,13 @@ import pytest
 import jwt
 from unittest.mock import Mock, patch
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env.local FIRST (before any imports that need env vars)
+env_file = Path(__file__).parent.parent.parent / ".env.local"
+if env_file.exists():
+    load_dotenv(env_file)
 
 # CRITICAL: Set env vars BEFORE importing src.auth
 # auth.py reads ALLOWED_USERS at module level (on import)

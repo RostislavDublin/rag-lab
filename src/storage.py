@@ -230,6 +230,50 @@ class DocumentStorage:
         blob = self.bucket.blob(path)
         return await asyncio.to_thread(blob.download_as_bytes)
     
+    async def fetch_bm25_index(self, doc_uuid: str) -> dict:
+        """
+        Fetch BM25 index for a document from GCS.
+        
+        Args:
+            doc_uuid: Document UUID
+        
+        Returns:
+            Dict with term_frequencies:
+            {
+                "term_frequencies": {"kubernetes": 15, "deployment": 12, ...}
+            }
+        
+        Note: 
+            - Returns empty term_frequencies if index doesn't exist
+            - summary, keywords, token_count are in PostgreSQL, not here
+        """
+        try:
+            path = f"{doc_uuid}/bm25_doc_index.json"
+            blob = self.bucket.blob(path)
+            
+            # Check if exists
+            exists = await asyncio.to_thread(blob.exists)
+            if not exists:
+                logger.warning(f"BM25 index not found for {doc_uuid}, using empty index")
+                return {"term_frequencies": {}}
+            
+            content = await asyncio.to_thread(blob.download_as_bytes)
+            index_data = json.loads(content.decode('utf-8'))
+            
+            # Validate structure
+            if "term_frequencies" not in index_data:
+                logger.warning(f"Invalid BM25 index format for {doc_uuid}, missing term_frequencies")
+                return {"term_frequencies": {}}
+            
+            return index_data
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Corrupted BM25 index JSON for {doc_uuid}: {e}")
+            return {"term_frequencies": {}}
+        except Exception as e:
+            logger.error(f"Failed to fetch BM25 index for {doc_uuid}: {e}")
+            return {"term_frequencies": {}}
+    
     def get_signed_url(
         self,
         doc_uuid: str,
