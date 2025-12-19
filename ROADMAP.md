@@ -396,224 +396,31 @@ CREATE TABLE query_logs (
 
 ---
 
-## 🎯 Recommended Roadmap
-
-### Phase 1: Production Readiness (Next 2 Weeks)
-**Goal:** Make RAG Lab production-ready for multi-tenant SaaS
-
-1. **Metadata Filtering + Multi-Tenancy** ✅ COMPLETED (Dec 13, 2025)
-   - ✅ Add JSONB metadata column with GIN index
-   - ✅ Implement filters parameter in query API (MongoDB Query Language)
-   - ✅ Add user_id to upload metadata
-   - ✅ Update all queries to filter by metadata
-   - ✅ Write tests for multi-tenant isolation
-   
-2. **Security: X-End-User-ID Access Control** ✅ COMPLETED (Dec 15, 2025)
-   - ✅ Added `TRUSTED_SERVICE_ACCOUNTS` config parameter
-   - ✅ JWT validation: only whitelisted service accounts can set X-End-User-ID
-   - ✅ Regular users: X-End-User-ID ignored (403 Forbidden if attempted)
-   - ✅ Unit tests: 4 security tests covering delegation scenarios
-   - ✅ E2E tests: All 30 tests pass with security enabled
-   - ✅ Documentation: README and .env.local.example updated
-   - **Impact:** CRITICAL security fix - prevents impersonation attacks in production
-
-**Deliverable:** Production-ready multi-tenant RAG system with secure user isolation
-
----
-
-### Phase 2: Quality Improvements (Next Month)
-**Goal:** Match industry-standard search quality
-
-2. **Reranking** (6 hours) 🟡 P1
-   - Integrate cross-encoder/ms-marco-MiniLM-L-6-v2
-   - Add reranking step after vector search
-   - Benchmark quality improvements
-   - Optional: make reranking toggleable
-
-3. **Hybrid Search** (8 hours) 🟡 P1
-   - Enable pg_trgm extension
-   - Add tsvector column + GIN index
-   - Implement weighted scoring (0.7 vector + 0.3 BM25)
-   - Add keyword extraction from queries
-   - Test on exact match scenarios
-
-**Deliverable:** Best-in-class search quality
-
----
-
-### Phase 3: Advanced Features (Backlog)
-**Goal:** Differentiation and optimization
-
-4. **Document Versioning** (8 hours) 🟢 P3
-   - Implement soft delete + replacement tracking
-   - Add version history API endpoints
-   - Support rollback to previous versions
-
-5. **Parent Document Retrieval** (10 hours) 🟢 P3
-   - Add parent-child chunk relationship
-   - Implement hierarchical chunking
-   - Return parent context for better LLM generation
-
-6. **Async Processing** (10 hours) 🟢 P4
-   - Implement background job queue (Cloud Tasks)
-   - Return 202 Accepted for uploads
-   - Add job status polling endpoint
-   - Webhook notifications on completion
-
-7. **Query Analytics** (6 hours) 🟢 P4
-   - Log all queries with metadata
-   - Build analytics dashboard
-   - Implement user feedback collection
-   - Track popular queries and zero-result cases
-
----
-
-## 🚀 Quick Wins (Immediate Impact)
-
-### 1. Metadata Filtering (4 hours)
-**Why First:**
-- Highest impact/effort ratio
-- Unblocks multi-tenancy
-- Required for production SaaS
-- Simple implementation (native PostgreSQL JSONB)
-
-**Next Steps:**
-1. Add metadata column to schema
-2. Update QueryRequest model
-3. Modify search_similar_chunks() SQL
-4. Add tests
-5. Update API documentation
-
-### 2. Add Example Filters to README (30 minutes)
-**Why:**
-- Documents intended usage patterns
-- Educates users on best practices
-- Low effort, high clarity
-
----
-
-## 📝 Implementation Notes
-
-### Metadata Filtering Deep Dive
-
-**Schema Migration:**
-```sql
--- Add metadata column
-ALTER TABLE original_documents 
-ADD COLUMN metadata JSONB DEFAULT '{}'::jsonb;
-
--- Create GIN index for fast filtering
-CREATE INDEX idx_documents_metadata 
-ON original_documents USING gin(metadata);
-
--- Optional: Add specific indexes for common filters
-CREATE INDEX idx_documents_user_id 
-ON original_documents ((metadata->>'user_id'));
-```
-
-**API Examples:**
-```bash
-# Upload with metadata
-curl -X POST /v1/documents/upload \
-  -F "file=@report.pdf" \
-  -F "metadata={\"user_id\":\"user123\",\"tags\":[\"finance\",\"Q4\"],\"department\":\"accounting\",\"status\":\"approved\"}"
-
-# Simple filter query
-curl -X POST /v1/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "revenue analysis",
-    "top_k": 5,
-    "min_similarity": 0.5,
-    "filters": {
-      "user_id": "user123",
-      "tags": {"$in": ["finance", "accounting"]}
-    }
-  }'
-
-# Complex filter with AND/OR/NOT
-curl -X POST /v1/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "contract terms",
-    "filters": {
-      "$and": [
-        {"user_id": "user123"},
-        {
-          "$or": [
-            {"tags": {"$all": ["legal", "reviewed"]}},
-            {"department": "legal"}
-          ]
-        },
-        {
-          "$not": {
-            "$or": [
-              {"status": "archived"},
-              {"confidentiality": "top-secret"}
-            ]
-          }
-        },
-        {"created_at": {"$gte": "2025-01-01"}}
-      ]
-    }
-  }'
-
-# Range queries
-curl -X POST /v1/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "quarterly reports",
-    "filters": {
-      "created_at": {
-        "$gte": "2025-10-01",
-        "$lt": "2026-01-01"
-      },
-      "score": {"$gte": 80}
-    }
-  }'
-```
-
-**MongoDB → PostgreSQL Mapping:**
-
-| MongoDB Filter | PostgreSQL WHERE Clause | Example |
-|----------------|-------------------------|---------|
-| `{"field": "value"}` | `metadata->>'field' = 'value'` | Exact match |
-| `{"field": {"$eq": "value"}}` | `metadata->>'field' = 'value'` | Explicit equality |
-| `{"field": {"$ne": "value"}}` | `metadata->>'field' != 'value'` | Not equal |
-| `{"field": {"$gt": 100}}` | `(metadata->>'field')::numeric > 100` | Greater than |
-| `{"field": {"$gte": 100}}` | `(metadata->>'field')::numeric >= 100` | Greater or equal |
-| `{"field": {"$lt": 100}}` | `(metadata->>'field')::numeric < 100` | Less than |
-| `{"field": {"$lte": 100}}` | `(metadata->>'field')::numeric <= 100` | Less or equal |
-| `{"tags": {"$in": ["a","b"]}}` | `metadata->'tags' ?| array['a','b']` | Array contains ANY |
-| `{"tags": {"$all": ["a","b"]}}` | `metadata->'tags' ?& array['a','b']` | Array contains ALL |
-| `{"tags": {"$nin": ["a","b"]}}` | `NOT (metadata->'tags' ?| array['a','b'])` | Array contains NONE |
-| `{"field": {"$exists": true}}` | `metadata ? 'field'` | Key exists |
-| `{"field": {"$exists": false}}` | `NOT (metadata ? 'field')` | Key doesn't exist |
-| `{"$and": [A, B]}` | `(A_clause) AND (B_clause)` | Logical AND |
-| `{"$or": [A, B]}` | `(A_clause) OR (B_clause)` | Logical OR |
-| `{"$not": A}` | `NOT (A_clause)` | Logical NOT |
-
----
-
 ## 🎓 Learning Resources
-
-**Metadata Filtering:**
-- PostgreSQL JSONB: https://www.postgresql.org/docs/current/datatype-json.html
-- GIN Indexes: https://www.postgresql.org/docs/current/gin-intro.html
-
-**Reranking:**
-- Cross-Encoders: https://www.sbert.net/examples/applications/cross-encoder/README.html
-- MS MARCO: https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2
 
 **Hybrid Search:**
 - BM25: https://en.wikipedia.org/wiki/Okapi_BM25
-- PostgreSQL Full-Text Search: https://www.postgresql.org/docs/current/textsearch.html
+- Reciprocal Rank Fusion: https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf
+
+**PostgreSQL:**
+- JSONB: https://www.postgresql.org/docs/current/datatype-json.html
+- GIN Indexes: https://www.postgresql.org/docs/current/gin-intro.html
+- Full-Text Search: https://www.postgresql.org/docs/current/textsearch.html
 
 ---
 
 ## 🔄 Version History
 
-**v0.2.0 (Current - Dec 11, 2025):**
+**v0.2.1 (Current - Dec 19, 2025):**
+- ✅ Hybrid Search Phase 2 complete (BM25 index generation, LLM extraction)
+- ✅ Metadata filtering implemented (MongoDB Query Language, filter_parser.py)
+- ✅ Reranking implemented (gemini-2.5-flash-lite, configurable)
+- ✅ All env vars required (no defaults in code)
+- ✅ Models unified to gemini-2.5-flash-lite (extraction + reranking)
+- ✅ BigQuery billing analytics tool (scripts/query_billing.py)
+- ✅ 194 tests passing (134 unit, 23 integration, 37 e2e)
+
+**v0.2.0 (Dec 11, 2025):**
 - ✅ Inline unit test fixtures
 - ✅ Similarity threshold filtering (min_similarity)
 - ✅ 74 comprehensive tests (49 unit, 20 e2e, 5 integration)
@@ -625,9 +432,6 @@ curl -X POST /v1/query \
 - ✅ Hybrid storage (PostgreSQL + GCS)
 - ✅ SHA256 deduplication
 - ✅ Cloud Run deployment
-
-**v0.3.0 (Planned - Next 2 Weeks):**
-- 🔄 Metadata filtering + multi-tenancy
 
 ---
 
@@ -646,18 +450,7 @@ curl -X POST /v1/query \
   4. E2E tests for hybrid queries
   5. Documentation update
 
-**Option B: Metadata Filtering** (Product/SaaS Critical)
-- **Effort:** 4 hours
-- **Impact:** Enable multi-tenancy, production SaaS deployment
-- **Value:** User isolation, document categorization, time-based filtering
-- **Tasks:**
-  1. Add `metadata JSONB` column to PostgreSQL
-  2. Implement MongoDB-style filter parser
-  3. Update `/v1/query` and `/v1/upload` endpoints
-  4. E2E tests for multi-tenant isolation
-  5. Documentation update
-
-**Option C: BigQuery Billing Analytics** (Cost Optimization)
+**Option B: BigQuery Billing Analytics** (Cost Optimization)
 - **Status:** Infrastructure ready, waiting for data (Dec 19-20)
 - **Next:** Analyze costs when data arrives, optimize expensive operations
 - **Tasks:**
@@ -666,11 +459,21 @@ curl -X POST /v1/query \
   3. Create cost dashboard queries
   4. Optimize if needed
 
+**Option C: Schema Migration System** (Infrastructure Improvement)
+- **Effort:** 12-16 hours
+- **Impact:** Production operations requirement
+- **Value:** Versioned migrations, rollback capability, testable schema changes
+- **Tasks:**
+  1. Setup Alembic for PostgreSQL migrations
+  2. Create migration for existing schema
+  3. Implement GCS schema versioning
+  4. Update deployment scripts
+
 ### 🗓️ Recommended Sequence:
 
 1. **Today (Dec 19):** Wait for billing data → analyze costs
-2. **Next session:** Choose Phase 3 (technical) OR Metadata Filtering (product)
-3. **Future:** Complete whichever wasn't chosen in step 2
+2. **Next session:** Choose Hybrid Search Phase 3 (2-3 hours) OR wait for billing data
+3. **Future:** Schema Migration System when ready for production hardening
 
 ---
 
@@ -681,17 +484,16 @@ curl -X POST /v1/query \
 "Implement Hybrid Search Phase 3 from ROADMAP.md - BM25 query integration with RRF fusion"
 ```
 
-**To implement Metadata Filtering:**
-```
-"Implement metadata filtering from ROADMAP.md - MongoDB-style filters for multi-tenancy"
-```
-
 **To analyze billing data:**
 ```
 "Analyze BigQuery billing data - identify cost drivers and optimize"
 ```
 
+**To implement Schema Migration System:**
+```
+"Implement Schema Migration System from ROADMAP.md - Alembic for PostgreSQL + GCS versioning"
+```
+
 ---
 
-**Status:** Ready for Phase 1 implementation
-**Contact:** Start new conversation with "Continue from ROADMAP.md Phase 1"
+**Status:** v0.2.1 - Metadata filtering, reranking, and hybrid search Phase 2 complete. Ready for Phase 3 or cost optimization.
