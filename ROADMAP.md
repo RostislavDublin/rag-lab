@@ -1,8 +1,8 @@
 # RAG Lab - Product Roadmap
 
-**Last Updated:** December 18, 2025  
-**Current Version:** 0.2.0  
-**Status:** Production-ready with hybrid search Phase 2 complete (LLM extraction, retry logic, cost optimization). All 194 tests passing. Phase 3 (query integration) next.
+**Last Updated:** December 19, 2025  
+**Current Version:** 0.2.1  
+**Status:** Production-ready with hybrid search Phase 2 complete. Models unified to gemini-2.5-flash-lite (extraction + reranking). All env vars now required (no defaults). BigQuery billing analytics ready. All 194 tests passing. **Next: Phase 3 (BM25 query integration) or Metadata Filtering.**
 
 ---
 
@@ -28,6 +28,9 @@
 - ✅ Comprehensive testing (194 tests: 134 unit, 23 integration, 37 e2e - all passing)
 - ✅ Local development workflow with hot reload
 - ✅ File validation (3-tier: strict for PDF, structured for JSON/XML, lenient for text)
+- ✅ **LLM Models:** Unified to `gemini-2.5-flash-lite` for extraction and reranking (100% success rate, 30x faster than gemini-2.5-flash, cheaper)
+- ✅ **Configuration:** All env vars required (no defaults in code), explicit .env.local setup
+- ✅ **BigQuery Billing Analytics:** OAuth-based query tool (scripts/query_billing.py), dataset: myai-475419.billing_export, waiting for data (24-48hrs)
 
 ---
 
@@ -934,17 +937,65 @@ curl -X POST /v1/query \
 
 ---
 
-## 📞 Next Steps
+## 📞 Next Steps & Priorities
 
-**To implement metadata filtering:**
-1. Review this roadmap
-2. Start new conversation: "Implement metadata filtering from ROADMAP.md"
-3. Agent will have full context and can proceed with implementation
+### 🎯 Immediate Next Action (Choose One):
 
-**To implement other features:**
-1. Reference specific section from this roadmap
-2. Provide additional requirements/constraints
-3. Agent implements with tests and documentation
+**Option A: Hybrid Search Phase 3 - BM25 Query Integration** (Technical Completion)
+- **Effort:** 2-3 hours
+- **Impact:** Complete hybrid search feature (vector + BM25 + RRF fusion)
+- **Value:** Better retrieval quality, keyword+semantic search combined
+- **Tasks:**
+  1. Load BM25 index from GCS in `/v1/query` endpoint
+  2. Implement BM25 scoring (TF-IDF with stemming)
+  3. RRF fusion (vector + BM25 scores)
+  4. E2E tests for hybrid queries
+  5. Documentation update
+
+**Option B: Metadata Filtering** (Product/SaaS Critical)
+- **Effort:** 4 hours
+- **Impact:** Enable multi-tenancy, production SaaS deployment
+- **Value:** User isolation, document categorization, time-based filtering
+- **Tasks:**
+  1. Add `metadata JSONB` column to PostgreSQL
+  2. Implement MongoDB-style filter parser
+  3. Update `/v1/query` and `/v1/upload` endpoints
+  4. E2E tests for multi-tenant isolation
+  5. Documentation update
+
+**Option C: BigQuery Billing Analytics** (Cost Optimization)
+- **Status:** Infrastructure ready, waiting for data (Dec 19-20)
+- **Next:** Analyze costs when data arrives, optimize expensive operations
+- **Tasks:**
+  1. Query billing data (scripts/query_billing.py)
+  2. Identify cost drivers (Gemini API, embeddings, storage)
+  3. Create cost dashboard queries
+  4. Optimize if needed
+
+### 🗓️ Recommended Sequence:
+
+1. **Today (Dec 19):** Wait for billing data → analyze costs
+2. **Next session:** Choose Phase 3 (technical) OR Metadata Filtering (product)
+3. **Future:** Complete whichever wasn't chosen in step 2
+
+---
+
+## 📝 Implementation Commands
+
+**To implement Hybrid Search Phase 3:**
+```
+"Implement Hybrid Search Phase 3 from ROADMAP.md - BM25 query integration with RRF fusion"
+```
+
+**To implement Metadata Filtering:**
+```
+"Implement metadata filtering from ROADMAP.md - MongoDB-style filters for multi-tenancy"
+```
+
+**To analyze billing data:**
+```
+"Analyze BigQuery billing data - identify cost drivers and optimize"
+```
 
 ---
 
