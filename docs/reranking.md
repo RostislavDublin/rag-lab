@@ -39,7 +39,7 @@ Uses Gemini models to evaluate relevance - Google's recommended approach for hig
 ```bash
 RERANKER_ENABLED=true
 RERANKER_TYPE=gemini
-RERANKER_MODEL=gemini-2.0-flash-exp  # or gemini-1.5-flash, gemini-2.5-flash
+RERANKER_MODEL=gemini-2.5-flash-lite  # RECOMMENDED: cheap, reliable, 100% success rate
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=us-central1
 

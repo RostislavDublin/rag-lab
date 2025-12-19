@@ -65,6 +65,7 @@ def test_large_txt_chunking(doc_processor):
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow  # Takes 60+ seconds, calls Vertex AI API hundreds of times
 async def test_large_txt_processing_timeout(doc_processor):
     """Test that processing doesn't hang indefinitely"""
     import asyncio

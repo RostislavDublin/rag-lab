@@ -53,7 +53,7 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")  # OAuth client secret
 REDIRECT_URI = "http://localhost:8080/oauth2callback"
 AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-SCOPE = "openid email profile"
+SCOPE = "openid email profile https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/cloud-platform"
 
 # .env.local path for token storage
 ENV_FILE = project_root / ".env.local"

@@ -209,6 +209,45 @@ Follow the same git workflow as other projects:
 - User must say "commit", "push", "c&p", or equivalent
 - Show git status and wait for confirmation
 
+## BigQuery Billing Analytics
+
+**Dataset configured:** `myai-475419.billing_export` (US multi-region)
+**Export started:** December 18, 2025
+**Export type:** Detailed usage cost (SKU-level breakdown)
+
+**Purpose:** Track and analyze Google Cloud costs, especially:
+- Vertex AI API costs (Gemini generation, embeddings)
+- Detailed SKU breakdown (flash vs flash-lite, input/output tokens)
+- Identify cost drivers for reranking, extraction, and RAG operations
+
+**When user asks for billing details or cost breakdown:**
+1. Query `myai-475419.billing_export.gcp_billing_export_v1_*` (standard export)
+2. Query `myai-475419.billing_export.gcp_billing_export_resource_v1_*` (detailed export for SKU-level)
+3. Filter by date range user specifies (default: last 7 days)
+4. Group by service, SKU, and show total costs
+5. Identify Vertex AI API costs separately
+
+**Example query template:**
+```sql
+SELECT
+  service.description AS service,
+  sku.description AS sku_name,
+  COUNT(*) AS usage_count,
+  SUM(usage.amount) AS total_usage,
+  SUM(cost) AS total_cost
+FROM `myai-475419.billing_export.gcp_billing_export_resource_v1_*`
+WHERE DATE(_PARTITIONTIME) BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
+  AND cost > 0
+GROUP BY service, sku_name
+ORDER BY total_cost DESC
+LIMIT 20
+```
+
+**Cost context:**
+- Storage: First 10 GiB/month FREE (billing data ~100-500 MB → $0)
+- Queries: First 1 TiB/month FREE (typical usage well under limit → $0)
+- **Total billing export cost: $0/month**
+
 ## Learning Resources
 
 - Primary: `/Users/Rostislav_Dublin/src/drs/ai/generative-ai/` (Google's official examples)

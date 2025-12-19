@@ -35,8 +35,10 @@ from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
-# Default model from environment or fallback to gemini-2.5-flash-lite
-DEFAULT_MODEL = os.getenv("LLM_EXTRACTION_MODEL", "gemini-2.5-flash-lite")
+# Model must be set via LLM_EXTRACTION_MODEL env var (e.g., gemini-2.0-flash-exp-local)
+DEFAULT_MODEL = os.getenv("LLM_EXTRACTION_MODEL")
+if not DEFAULT_MODEL:
+    raise ValueError("LLM_EXTRACTION_MODEL environment variable is required")
 
 # Retry configuration (similar to ADK HttpRetryOptions)
 MAX_RETRY_ATTEMPTS = 5

@@ -99,7 +99,7 @@ gs://raglab-documents/
 
 **Cost-optimized model selection:**
 - **Extraction:** `gemini-2.5-flash-lite` ($2.25/10K docs, 100% reliable)
-- **Reranking:** `gemini-2.5-flash` (stable for search)
+- **Reranking:** `gemini-2.5-flash-lite` (same model, unified config)
 
 **Key features:**
 - 5 retry attempts with exponential backoff
@@ -109,7 +109,8 @@ gs://raglab-documents/
 **Environment variables:**
 ```bash
 EMBEDDING_MODEL=text-embedding-005
-RERANKER_MODEL=gemini-2.5-flash
+RERANKER_ENABLED=true
+RERANKER_MODEL=gemini-2.5-flash-lite
 LLM_EXTRACTION_MODEL=gemini-2.5-flash-lite
 ```
 
@@ -316,9 +317,9 @@ rag-lab/
   - Text formats → direct UTF-8 extraction
 - **File validation:** 3-tier strategy (strict/structured/lenient) with magic bytes detection
 - **SHA256 deduplication:** Content-based duplicate detection
-- **LLM reranking:** Gemini 2.5-flash async batch reranking (2 docs/batch, 10 parallel)
+- **LLM reranking:** Gemini 2.5-flash-lite async batch reranking (2 docs/batch, 10 parallel)
   - Reasoning explanation for each document
-  - 7-8s for 20 documents
+  - Fast and reliable (100% success rate)
   - Deterministic keyword trap test validates semantic understanding
 - **Vector similarity search:** PostgreSQL + pgvector (768-dim embeddings)
 - **Hybrid storage:** PostgreSQL (metadata + vectors) + GCS (files + text)

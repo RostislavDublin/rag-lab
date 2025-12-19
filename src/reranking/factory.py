@@ -46,26 +46,34 @@ class RerankingFactory:
             return cls._instance
         
         # Check if enabled
-        enabled_value = os.getenv("RERANKER_ENABLED", "false")
+        enabled_value = os.getenv("RERANKER_ENABLED")
+        if not enabled_value:
+            raise ValueError("RERANKER_ENABLED environment variable is required")
         enabled = enabled_value.lower() == "true"
         logger.info(f"Reranker config check: RERANKER_ENABLED={enabled_value} (enabled={enabled})")
         
         if not enabled:
             return None
         
-        reranker_type = os.getenv("RERANKER_TYPE", "gemini").lower()  # Default: gemini
-        model = os.getenv("RERANKER_MODEL", "")
+        reranker_type = os.getenv("RERANKER_TYPE")
+        if not reranker_type:
+            raise ValueError("RERANKER_TYPE environment variable is required when reranking enabled")
+        reranker_type = reranker_type.lower()
+        
+        model = os.getenv("RERANKER_MODEL")
+        if not model:
+            raise ValueError("RERANKER_MODEL environment variable is required when reranking enabled")
         
         # Create based on type
         try:
             if reranker_type == "gemini":
-                # Gemini LLM-based reranking (Google's recommended approach)
-                if not model:
-                    model = "gemini-2.5-flash"  # Default Gemini model
+                # Gemini LLM-based reranking
                 logger.info(f"Creating Gemini LLM reranker: {model}")
                 # Support both GOOGLE_CLOUD_PROJECT and GCP_PROJECT_ID env vars
                 project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")
-                location = os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GCP_REGION", "us-central1")
+                location = os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GCP_REGION")
+                if not location:
+                    raise ValueError("GCP_REGION or GOOGLE_CLOUD_LOCATION environment variable is required")
                 cls._instance = GeminiReranker(
                     model_name=model,
                     project_id=project_id,

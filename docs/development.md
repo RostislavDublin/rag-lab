@@ -120,6 +120,39 @@ uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
 source .venv/bin/activate && uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
+**Cloud SQL Proxy Setup (for Cloud SQL connection):**
+
+If using Cloud SQL (not local PostgreSQL), start Cloud SQL Proxy in background:
+
+```bash
+# Start Cloud SQL Proxy on localhost:5432 (TCP, not unix socket)
+# Survives terminal close, logs to /tmp/cloud-sql-proxy.log
+nohup cloud-sql-proxy PROJECT_ID:REGION:INSTANCE_NAME > /tmp/cloud-sql-proxy.log 2>&1 &
+
+# Example:
+nohup cloud-sql-proxy myai-475419:us-central1:rag-postgres > /tmp/cloud-sql-proxy.log 2>&1 &
+
+# Check proxy is running:
+ps aux | grep cloud-sql-proxy
+
+# View logs:
+tail -f /tmp/cloud-sql-proxy.log
+
+# Stop proxy:
+killall cloud-sql-proxy
+```
+
+**DATABASE_URL for Cloud SQL Proxy:**
+```bash
+# .env.local - LOCAL DEVELOPMENT (via Cloud SQL Proxy on localhost:5432)
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/dbname
+
+# .env - CLOUD RUN PRODUCTION (via unix socket)
+DATABASE_URL=postgresql+asyncpg://user:password@/dbname?host=/cloudsql/PROJECT_ID:REGION:INSTANCE
+```
+
+**Note:** Local development uses `@localhost:5432` (TCP via proxy), Cloud Run uses `@/dbname?host=/cloudsql/...` (unix socket).
+
 ### Option 2: Deployment Script
 
 Fast iteration with Cloud SQL Proxy and hot reload:
@@ -193,11 +226,14 @@ docker-compose down
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RERANKER_ENABLED` | `false` | Enable reranking |
-| `RERANKER_TYPE` | `gemini` | Reranker type: `gemini`, `local`, or `cohere` |
-| `RERANKER_MODEL` | `gemini-2.5-flash` | Model name (varies by reranker type) |
+| `RERANKER_ENABLED` | **REQUIRED** | Enable reranking (true/false) |
+| `RERANKER_TYPE` | **REQUIRED** | Reranker type: `gemini`, `local`, or `cohere` |
+| `RERANKER_MODEL` | **REQUIRED** | Model name: `gemini-2.5-flash-lite` (recommended) |
+| `LLM_EXTRACTION_MODEL` | **REQUIRED** | LLM for summary/keywords extraction: `gemini-2.5-flash-lite` |
 | `GEMINI_RERANK_BATCH_SIZE` | `2` | Documents per batch for Gemini reranking |
 | `GEMINI_RERANK_MAX_CONCURRENT` | `10` | Max parallel batches |
+
+**Note:** No default values in code - all variables must be set explicitly in `.env.local`
 
 See [docs/reranking.md](reranking.md) for detailed reranking configuration.
 
@@ -241,7 +277,7 @@ logs/
 2025-12-16 16:58:15 - src.main - INFO - Initializing Google Gen AI (project=myai-475419, location=us-central1)...
 2025-12-16 16:58:15 - src.main - INFO - Google Gen AI client initialized successfully
 2025-12-16 16:58:15 - src.database - INFO - Connected to PostgreSQL: localhost:5432/rag_db
-2025-12-16 16:58:16 - src.reranking.gemini - INFO - Reranking 20 documents with Gemini (gemini-2.5-flash) - BATCH MODE (batches of 2)
+2025-12-16 16:58:16 - src.reranking.gemini - INFO - Reranking 20 documents with Gemini (gemini-2.5-flash-lite) - BATCH MODE (batches of 2)
 2025-12-16 16:58:16 - src.reranking.gemini - INFO - ⏱️ Batch 1/10 START (2 docs)
 2025-12-16 16:58:16 - src.reranking.gemini - INFO - ⏱️ Batch 2/10 START (2 docs)
 ...

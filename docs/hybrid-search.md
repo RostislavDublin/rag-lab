@@ -28,10 +28,10 @@ Implement hybrid search combining:
 - Quality: Complete JSON with summary + keywords every time
 - Total: $2.25 per 10K documents (4.2x cheaper than flash)
 
-**Reranking:** `gemini-2.5-flash`
-- Cost: $0.30 input + $2.50 output per 1M tokens
-- Stable for search reranking
-- NOT recommended for extraction (10% JSON parse failures)
+**Reranking (Phase 3):** `gemini-2.5-flash-lite`
+- Same model as extraction (unified, reliable, cheap)
+- Cost: $0.10 input + $0.40 output per 1M tokens
+- 100% success rate, faster than flash
 
 ### Why Flash-Lite Won
 
@@ -71,8 +71,8 @@ RETRY_STATUS_CODES = {429, 500, 503, 504}  # Rate limit + server errors
 ```bash
 # .env.local
 EMBEDDING_MODEL=text-embedding-005              # Vector embeddings
-RERANKER_MODEL=gemini-2.5-flash                 # Search reranking  
-LLM_EXTRACTION_MODEL=gemini-2.5-flash-lite      # Summary/keywords (default)
+RERANKER_MODEL=gemini-2.5-flash-lite            # Search reranking (REQUIRED)
+LLM_EXTRACTION_MODEL=gemini-2.5-flash-lite      # Summary/keywords (REQUIRED)
 ```
 
 ---
