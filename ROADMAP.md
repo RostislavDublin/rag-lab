@@ -36,315 +36,9 @@
 
 ## ❌ Missing Features (Industry Standard Gaps)
 
-### 1. **Metadata Filtering** 🔴 CRITICAL
-**Priority:** P0 (Must Have - Next 2 Weeks)  
-**Effort:** 4 hours  
-**Impact:** HIGH - Required for production SaaS deployment
+**Note:** Metadata Filtering and Reranking are now ✅ IMPLEMENTED (Dec 2025).
 
-**Problem:**  
-Currently, `/v1/query` searches across ALL documents without filtering. Cannot implement:
-- Multi-tenant isolation (user_id filtering)
-- Document categorization (tags, departments)
-- Time-based filtering (uploaded_after, created_before)
-- Custom business logic (file_type, status, visibility)
-
-**Use Cases:**
-```python
-# Simple filter - user isolation (multi-tenancy)
-POST /v1/query
-{
-  "query": "pricing strategy",
-  "filters": {"user_id": "user123"}
-}
-
-# Array filtering - ANY tag matches
-{
-  "query": "contract terms",
-  "filters": {
-    "tags": {"$in": ["legal", "contracts"]},
-    "file_type": "pdf"
-  }
-}
-
-# Range query - time-based search
-{
-  "query": "Q4 2025 report",
-  "filters": {
-    "created_at": {
-      "$gte": "2025-10-01",
-      "$lt": "2026-01-01"
-    }
-  }
-}
-
-# Complex AND/OR/NOT logic
-{
-  "query": "financial analysis",
-  "filters": {
-    "$and": [
-      {"user_id": "user123"},
-      {
-        "$or": [
-          {"tags": {"$all": ["finance", "2025"]}},
-          {"department": "accounting"}
-        ]
-      },
-      {
-        "$not": {
-          "$or": [
-            {"status": "archived"},
-            {"confidentiality": {"$in": ["secret", "top-secret"]}}
-          ]
-        }
-      }
-    ]
-  }
-}
-
-# Multiple conditions (implicit AND)
-{
-  "query": "legal documents",
-  "filters": {
-    "user_id": "user123",
-    "tags": {"$all": ["legal", "reviewed"]},
-    "status": {"$ne": "draft"},
-    "created_at": {"$gte": "2025-01-01"}
-  }
-}
-```
-
-**Filter Query Language:**
-We use **MongoDB Query Language** for filters (industry standard, familiar to 90% of developers):
-
-```python
-# Simple filters (implicit AND)
-{
-  "filters": {
-    "user_id": "user123",
-    "tags": ["finance", "2025"]  # Array contains ANY
-  }
-}
-
-# Complex filters with logical operators
-{
-  "filters": {
-    "$and": [
-      {"user_id": "user123"},
-      {
-        "$or": [
-          {"tags": {"$in": ["finance", "legal"]}},
-          {"department": "accounting"}
-        ]
-      },
-      {
-        "$not": {
-          "$or": [
-            {"status": "archived"},
-            {"confidentiality": "top-secret"}
-          ]
-        }
-      },
-      {"created_at": {"$gte": "2025-01-01", "$lt": "2026-01-01"}}
-    ]
-  }
-}
-```
-
-**Supported Operators:**
-
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `$and` | All conditions must match | `{"$and": [A, B, C]}` |
-| `$or` | At least one condition must match | `{"$or": [A, B, C]}` |
-| `$not` | Inverts the condition | `{"$not": {"status": "archived"}}` |
-| `$eq` | Equals (default for scalars) | `{"status": "approved"}` or `{"status": {"$eq": "approved"}}` |
-| `$ne` | Not equals | `{"status": {"$ne": "archived"}}` |
-| `$gt` | Greater than | `{"score": {"$gt": 80}}` |
-| `$gte` | Greater than or equal | `{"created_at": {"$gte": "2025-01-01"}}` |
-| `$lt` | Less than | `{"score": {"$lt": 50}}` |
-| `$lte` | Less than or equal | `{"created_at": {"$lte": "2025-12-31"}}` |
-| `$in` | Value in array (ANY) | `{"tags": {"$in": ["finance", "legal"]}}` |
-| `$nin` | Value not in array | `{"status": {"$nin": ["draft", "deleted"]}}` |
-| `$all` | Array contains ALL values | `{"tags": {"$all": ["finance", "2025"]}}` |
-| `$exists` | Field exists/doesn't exist | `{"reviewed_by": {"$exists": true}}` |
-
-**Implementation Plan:**
-1. **Database Schema:**
-   - Add `metadata JSONB` column to `original_documents` table
-   - Create GIN index: `CREATE INDEX idx_metadata ON original_documents USING gin(metadata);`
-   - Migrate existing docs: `UPDATE original_documents SET metadata = '{"uploaded_by": "system"}'::jsonb`
-
-2. **Filter Parser (MongoDB → PostgreSQL):**
-   - Create `src/lib/filter_parser.py` to translate MongoDB query language to PostgreSQL WHERE clauses
-   - Support all operators: `$and`, `$or`, `$not`, `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$all`, `$exists`
-   - Generate parameterized queries to prevent SQL injection
-   - Return tuple: `(where_clause: str, params: list)`
-
-3. **API Changes:**
-   - Add `filters: Optional[dict]` parameter to `QueryRequest` model
-   - Update `search_similar_chunks()` in database.py to accept filters
-   - Call filter parser to generate WHERE clause
-   - Append to existing similarity filter: `WHERE similarity >= $min AND (parsed_filters)`
-
-4. **Upload Endpoint:**
-   - Accept optional `metadata` in upload request (JSON field in multipart/form-data)
-   - Store in database: `INSERT ... metadata = $metadata::jsonb`
-   - Default metadata: `{"uploaded_at": timestamp, "uploaded_by": "api"}`
-
-5. **Testing:**
-   - Unit tests: filter parser logic (all operators, nested conditions, edge cases)
-   - Integration tests: metadata filtering with real database queries
-   - E2E tests: multi-tenant isolation validation (user_id filtering)
-   - Performance tests: GIN index query speed with complex filters
-
-**Example Code:**
-```python
-# QueryRequest model with MongoDB-style filters
-class QueryRequest(BaseModel):
-    query: str
-    top_k: int = 5
-    min_similarity: float = 0.0
-    filters: Optional[dict] = None  # MongoDB query language
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "query": "contract analysis",
-                "top_k": 5,
-                "min_similarity": 0.7,
-                "filters": {
-                    "$and": [
-                        {"user_id": "user123"},
-                        {"tags": {"$in": ["legal", "contracts"]}},
-                        {"$not": {"status": "archived"}}
-                    ]
-                }
-            }
-        }
-
-# Filter parser (MongoDB → PostgreSQL)
-from src.lib.filter_parser import parse_filters
-
-# In search_similar_chunks()
-async def search_similar_chunks(..., filters: Optional[dict] = None):
-    where_clause = "(1 - (c.embedding <=> $1)) >= $2"
-    params = [embedding, min_similarity]
-    
-    if filters:
-        filter_where, filter_params = parse_filters(filters)
-        where_clause += f" AND ({filter_where})"
-        params.extend(filter_params)
-    
-    query = f"""
-        SELECT ... FROM document_chunks c
-        JOIN original_documents d ON c.original_doc_id = d.id
-        WHERE {where_clause}
-        ORDER BY c.embedding <=> $1
-        LIMIT $3
-    """
-    params.append(top_k)
-    return await conn.fetch(query, *params)
-```
-
-**Filter Parser Implementation:**
-```python
-# src/lib/filter_parser.py
-def parse_filters(filters: dict) -> tuple[str, list]:
-    """
-    Convert MongoDB query language to PostgreSQL WHERE clause.
-    
-    Returns: (where_clause, params)
-    """
-    conditions = []
-    params = []
-    
-    for key, value in filters.items():
-        if key == "$and":
-            and_conditions = [parse_filters(f) for f in value]
-            and_clause = " AND ".join(f"({c[0]})" for c in and_conditions)
-            conditions.append(and_clause)
-            for c in and_conditions:
-                params.extend(c[1])
-        
-        elif key == "$or":
-            or_conditions = [parse_filters(f) for f in value]
-            or_clause = " OR ".join(f"({c[0]})" for c in or_conditions)
-            conditions.append(or_clause)
-            for c in or_conditions:
-                params.extend(c[1])
-        
-        elif key == "$not":
-            not_clause, not_params = parse_filters(value)
-            conditions.append(f"NOT ({not_clause})")
-            params.extend(not_params)
-        
-        else:
-            # Field-level operators
-            if isinstance(value, dict):
-                field_conditions = parse_field_operators(key, value, params)
-                conditions.append(field_conditions)
-            else:
-                # Simple equality: {"user_id": "user123"}
-                conditions.append(f"d.metadata->>${len(params)+1} = ${len(params)+2}")
-                params.extend([key, value])
-    
-    return " AND ".join(conditions), params
-```
-
-**Benefits:**
-- ✅ Multi-tenant SaaS ready (user_id isolation)
-- ✅ Document organization (tags, categories)
-- ✅ Access control foundation
-- ✅ Flexible custom filtering
-- ✅ Zero performance impact with GIN index
-
-**Risks:**
-- None - JSONB is native PostgreSQL, GIN indexes are performant
-
----
-
-### 2. **Reranking** 🟡 HIGH
-**Priority:** P1 (Should Have - Next Month)  
-**Effort:** 6 hours  
-**Impact:** MEDIUM - 15-30% quality improvement
-
-**Problem:**  
-Vector search alone is suboptimal for ranking. Cross-encoder models significantly improve precision by scoring query-document pairs.
-
-**Solution:**
-1. Vector search retrieves top 20-50 candidates (high recall)
-2. Cross-encoder reranks candidates by query-document relevance (high precision)
-3. Return top 5 best results
-
-**Models:**
-- **Local (recommended):** `cross-encoder/ms-marco-MiniLM-L-6-v2` (fast, free, 90MB)
-- **Cloud (future):** Vertex AI Ranking API (when available in GA)
-
-**Implementation:**
-```python
-from sentence_transformers import CrossEncoder
-
-reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-
-# After vector search
-candidates = await vector_search(query, top_k=20)
-
-# Rerank
-scores = reranker.predict([(query, c.text) for c in candidates])
-reranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
-
-return reranked[:5]  # Top 5 after reranking
-```
-
-**Benefits:**
-- ✅ Better ranking quality
-- ✅ Handles semantic nuances
-- ✅ Local model = no API costs
-- ✅ Fast inference (10-20ms per pair)
-
----
-
-### 3. **Hybrid Search (BM25 + Vector)** ✅ Phase 2 COMPLETE | ⏳ Phase 3 NEXT
+### 1. **Hybrid Search (BM25 + Vector)** ✅ Phase 2 COMPLETE | ⏳ Phase 3 NEXT
 **Priority:** P0 (Current Sprint - Week of Dec 16-22, 2025)  
 **Effort:** 17-26 hours total (5 phases) | **Phase 2: 8 hours DONE** | **Phase 3: 4-6 hours remaining**  
 **Impact:** HIGH - Better retrieval quality for keyword + semantic queries  
@@ -412,7 +106,7 @@ Search Flow:
 
 ---
 
-### 4. **Multi-Tenancy / User Isolation** 🔴 CRITICAL
+### 2. **Multi-Tenancy / User Isolation** 🔴 CRITICAL
 **Priority:** P0 (MUST HAVE - part of Metadata Filtering)  
 **Effort:** 2 hours (included in metadata filtering)  
 **Impact:** CRITICAL - Security requirement for SaaS
@@ -440,7 +134,7 @@ filters = {
 
 ---
 
-### 5. **Schema Migration System** 🟡 HIGH
+### 3. **Schema Migration System** 🟡 HIGH
 **Priority:** P1 (Next Quarter - Infrastructure Improvement)  
 **Effort:** 12-16 hours  
 **Impact:** HIGH - Production operations requirement
@@ -491,7 +185,7 @@ python deployment/migrate_gcs.py        # GCS schema
 
 ---
 
-### 6. **Document Updates / Versioning** 🟢 MEDIUM
+### 4. **Document Updates / Versioning** 🟢 MEDIUM
 **Priority:** P3 (Nice to Have - Backlog)  
 **Effort:** 8 hours  
 **Impact:** MEDIUM - Needed for evolving documents
@@ -529,7 +223,7 @@ SELECT * WHERE doc_uuid = $uuid ORDER BY version_number DESC LIMIT 1;
 
 ---
 
-### 6. **Parent Document Retrieval** 🟢 MEDIUM
+### 5. **Parent Document Retrieval** 🟢 MEDIUM
 **Priority:** P3 (Nice to Have - Backlog)  
 **Effort:** 10 hours  
 **Impact:** MEDIUM - Better context for LLM generation
@@ -563,7 +257,7 @@ ALTER TABLE document_chunks ADD COLUMN parent_chunk_index INT;
 
 ---
 
-### 7. **Async Processing** 🟢 LOW
+### 6. **Async Processing** 🟢 LOW
 **Priority:** P4 (Nice to Have - Backlog)  
 **Effort:** 10 hours  
 **Impact:** LOW - UX improvement, not critical
@@ -597,7 +291,7 @@ GET /v1/jobs/{job_id}
 
 ---
 
-### 8. **Multi-Query / Query Decomposition** 🟢 LOW
+### 7. **Multi-Query / Query Decomposition** 🟢 LOW
 **Priority:** P4 (Optimization - Backlog)  
 **Effort:** 3 hours  
 **Impact:** LOW - Edge case optimization
@@ -620,7 +314,7 @@ Final results
 
 ---
 
-### 9. **Contextual Compression** 🟢 LOW
+### 8. **Contextual Compression** 🟢 LOW
 **Priority:** P4 (Optimization - Backlog)  
 **Effort:** 4 hours  
 **Impact:** LOW - Token optimization
@@ -641,7 +335,7 @@ Output: "Standard: $99/mo. Enterprise: $499/mo. Annual discount: 20%."
 
 ---
 
-### 10. **Query Analytics** 🟢 LOW
+### 9. **Query Analytics** 🟢 LOW
 **Priority:** P4 (Observability - Backlog)  
 **Effort:** 6 hours  
 **Impact:** LOW - Product insights
