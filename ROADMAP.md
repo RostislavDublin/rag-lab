@@ -132,10 +132,10 @@ python deployment/migrate_gcs.py        # GCS schema
 
 ---
 
-### 3. **Document Updates / Versioning** 🟢 MEDIUM
-**Priority:** P2 (Nice to Have - Future Enhancement)  
+### 7. **Document Updates / Versioning** 🟢 LOW
+**Priority:** P4 (Future - Compliance/Audit)  
 **Effort:** 8 hours  
-**Impact:** MEDIUM - Needed for evolving documents
+**Impact:** LOW - Delete+re-upload is simpler for 95% of use cases
 
 **Problem:**  
 Current implementation: documents are immutable. No way to update content.
@@ -170,7 +170,7 @@ SELECT * WHERE doc_uuid = $uuid ORDER BY version_number DESC LIMIT 1;
 
 ---
 
-### 4. **Parent Document Retrieval** 🟢 MEDIUM
+### 3. **Parent Document Retrieval** 🟢 MEDIUM
 **Priority:** P2 (Nice to Have - Future Enhancement)  
 **Effort:** 10 hours  
 **Impact:** MEDIUM - Better context for LLM generation
@@ -204,7 +204,7 @@ ALTER TABLE document_chunks ADD COLUMN parent_chunk_index INT;
 
 ---
 
-### 5. **Async Processing** 🟢 LOW
+### 4. **Async Processing** 🟢 LOW
 **Priority:** P3 (Nice to Have - UX Improvement)  
 **Effort:** 10 hours  
 **Impact:** LOW - UX improvement, not critical
@@ -241,7 +241,7 @@ GET /v1/jobs/{job_id}
 
 ---
 
-### 7. **Row-Level Security / Hard Multi-Tenancy** 🟢 LOW
+### 6. **Row-Level Security / Hard Multi-Tenancy** 🟢 LOW
 **Priority:** P4 (Future - Advanced Security)  
 **Effort:** 4 hours  
 **Impact:** LOW - Optional hardening beyond metadata filtering
@@ -285,7 +285,7 @@ SET LOCAL app.tenant_id = 'company-123';
 
 ---
 
-### 8. **Multi-Query / Query Decomposition** 🟢 LOW
+### 5. **Multi-Query / Query Decomposition** 🟢 LOW
 **Priority:** P3 (Optimization - Backlog)  
 **Effort:** 3 hours  
 **Impact:** LOW - Edge case optimization
