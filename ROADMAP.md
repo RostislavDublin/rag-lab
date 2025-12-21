@@ -81,36 +81,8 @@
 
 ---
 
-### 2. **Multi-Tenancy / User Isolation** 🔴 CRITICAL
-**Priority:** P0 (MUST HAVE - part of Metadata Filtering)  
-**Effort:** 2 hours (included in metadata filtering)  
-**Impact:** CRITICAL - Security requirement for SaaS
-
-**Implementation:**
-- Store `user_id` in metadata during upload
-- Filter by `user_id` in all queries
-- Row-level security (RLS) in PostgreSQL (optional hardening)
-
-**Security Model:**
-```python
-# Upload
-metadata = {
-    "user_id": get_current_user_id(),
-    "org_id": get_current_org_id(),
-    "visibility": "private"  # or "shared", "public"
-}
-
-# Query (automatic injection)
-filters = {
-    "user_id": current_user.id,
-    "visibility": {"$in": ["private", "shared"]}  # Supports user's docs + shared docs
-}
-```
-
----
-
-### 3. **Schema Migration System** 🟡 HIGH
-**Priority:** P1 (Next Quarter - Infrastructure Improvement)  
+### 2. **Schema Migration System** 🟡 HIGH
+**Priority:** P1 (Next Sprint - Infrastructure Improvement)  
 **Effort:** 12-16 hours  
 **Impact:** HIGH - Production operations requirement
 
@@ -160,8 +132,8 @@ python deployment/migrate_gcs.py        # GCS schema
 
 ---
 
-### 4. **Document Updates / Versioning** 🟢 MEDIUM
-**Priority:** P3 (Nice to Have - Backlog)  
+### 3. **Document Updates / Versioning** 🟢 MEDIUM
+**Priority:** P2 (Nice to Have - Future Enhancement)  
 **Effort:** 8 hours  
 **Impact:** MEDIUM - Needed for evolving documents
 
@@ -198,8 +170,8 @@ SELECT * WHERE doc_uuid = $uuid ORDER BY version_number DESC LIMIT 1;
 
 ---
 
-### 5. **Parent Document Retrieval** 🟢 MEDIUM
-**Priority:** P3 (Nice to Have - Backlog)  
+### 4. **Parent Document Retrieval** 🟢 MEDIUM
+**Priority:** P2 (Nice to Have - Future Enhancement)  
 **Effort:** 10 hours  
 **Impact:** MEDIUM - Better context for LLM generation
 
@@ -232,7 +204,10 @@ ALTER TABLE document_chunks ADD COLUMN parent_chunk_index INT;
 
 ---
 
-### 6. **Async Processing** 🟢 LOW
+### 5. **Async Processing** 🟢 LOW
+**Priority:** P3 (Nice to Have - UX Improvement)  
+**Effort:** 10 hours  
+**Impact:** LOW - UX improvement, not critical
 **Priority:** P4 (Nice to Have - Backlog)  
 **Effort:** 10 hours  
 **Impact:** LOW - UX improvement, not critical
@@ -266,8 +241,52 @@ GET /v1/jobs/{job_id}
 
 ---
 
-### 7. **Multi-Query / Query Decomposition** 🟢 LOW
-**Priority:** P4 (Optimization - Backlog)  
+### 7. **Row-Level Security / Hard Multi-Tenancy** 🟢 LOW
+**Priority:** P4 (Future - Advanced Security)  
+**Effort:** 4 hours  
+**Impact:** LOW - Optional hardening beyond metadata filtering
+
+**Current State:**  
+✅ Multi-tenancy already works via metadata filters:
+- Calling system adds `{"tenant_id": "company-123"}` to upload metadata
+- Calling system adds same filter to query requests
+- MongoDB Query Language filters results at application level
+
+**This Feature:**  
+PostgreSQL Row-Level Security (RLS) for database-level enforcement (defense in depth):
+
+```sql
+-- Enable RLS on tables
+ALTER TABLE original_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_chunks ENABLE ROW LEVEL SECURITY;
+
+-- Create policy: users see only their tenant's data
+CREATE POLICY tenant_isolation ON original_documents
+  USING (metadata->>'tenant_id' = current_setting('app.tenant_id'));
+
+-- Set tenant context per request
+SET LOCAL app.tenant_id = 'company-123';
+```
+
+**Benefits:**
+- 🛡️ Database-level enforcement (can't bypass with SQL)
+- 🔒 Defense in depth (if application filter fails)
+- 📊 Audit trail at database level
+
+**When Needed:**
+- Strict compliance requirements (SOC2, HIPAA)
+- Paranoid security posture
+- Multi-tenant SaaS with hostile tenants
+
+**Trade-offs:**
+- ⚠️ Adds complexity to connection management
+- ⚠️ Slight performance overhead
+- ⚠️ Current metadata approach is sufficient for 99% of use cases
+
+---
+
+### 8. **Multi-Query / Query Decomposition** 🟢 LOW
+**Priority:** P3 (Optimization - Backlog)  
 **Effort:** 3 hours  
 **Impact:** LOW - Edge case optimization
 
