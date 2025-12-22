@@ -32,7 +32,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY src/ ./src/
-COPY data/.gitkeep ./data/.gitkeep
+
+# Create data directory (no need to copy .gitkeep to production)
+RUN mkdir -p data
 
 # .env will be mounted from Secret Manager at runtime (not included in image)
 

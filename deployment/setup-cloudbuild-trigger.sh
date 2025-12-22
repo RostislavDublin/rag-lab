@@ -129,7 +129,7 @@ if ! gcloud builds triggers describe "$TRIGGER_NAME" --project="$GCP_PROJECT_ID"
         --build-config=cloudbuild.yaml \
         --project="$GCP_PROJECT_ID" \
         --region="$GCP_REGION" \
-        --service-account="projects/$GCP_PROJECT_ID/serviceAccounts/$CLOUDBUILD_SA"
+        --service-account="projects/$GCP_PROJECT_ID/serviceAccounts/${RUNTIME_SA}"
     
     echo -e "${GREEN}✓ Trigger created successfully${NC}"
 else
