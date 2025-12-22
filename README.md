@@ -1,32 +1,63 @@
 # RAG Lab - RAG-as-a-Service
 
-Production-ready Retrieval Augmented Generation (RAG) system with:
-- **Hybrid storage**: PostgreSQL for embeddings, GCS for documents (8.5x cheaper)
-- **Hybrid search Phase 2**: BM25 index generation with Snowball stemming, LLM summary/keywords extraction
-- **LLM reranking**: Gemini-powered async batch reranking with reasoning (7-8s for 20 docs)
+Production-ready Retrieval Augmented Generation (RAG) system with hybrid storage, multi-format support, LLM reranking, and comprehensive authentication.
+
+## 📖 How to Use This Documentation
+
+**This README is a navigation hub, not a comprehensive guide.**
+
+### For Humans (First-time users):
+1. **Start here** to understand what the project does
+2. **Follow topic links** to `docs/` for detailed technical information
+3. **Come back to README** when you need to find a specific guide
+
+### For AI Assistants (including Copilot):
+1. **ALWAYS read README first** when starting work in this project
+2. **Then read ALL linked documentation** for your task:
+   - Setting up locally? → Read [Development Guide](docs/development.md)
+   - Deploying to Cloud Run? → Read [Deployment Guide](docs/deployment.md)
+   - Working with API? → Read [API Reference](docs/api.md)
+   - Implementing auth? → Read [Authentication](docs/authentication.md)
+   - Writing tests? → Read [Testing Guide](docs/testing.md)
+3. **During work:** Reference the relevant topic document, not README
+
+**Why this matters:**
+- README was restructured from 1480 lines to focused topic files
+- Each `docs/*.md` file contains COMPLETE information for its domain
+- Reading only README without following links = missing critical context
+- AI: You MUST read the linked docs to get full context
+
+---
+
+## Key Features
+
+- **Hybrid Search**: Vector similarity + BM25 keyword + RRF fusion (Phase 3 complete, v0.3.0)
+- **Hybrid Storage**: PostgreSQL (embeddings + metadata) + GCS (documents, 8.5x cheaper)
+- **LLM Reranking**: Gemini-powered async batch reranking with reasoning explanations
+- **Multi-format**: 17 formats (PDF→MD, HTML→MD, JSON→YAML, XML→YAML, code, logs)
 - **UUID-based**: Globally unique, immutable document identifiers
-- **Deduplication**: SHA256 file hashing prevents duplicate uploads
-- **Multi-format support**: 17 formats (PDF, TXT, MD, JSON, XML, CSV, YAML, code files, logs)
-- **Structured data**: YAML conversion for JSON/XML preserves semantic information
-- **Vendor-independent auth**: JWT/JWKS supports Google, Azure AD, Auth0, Okta
-- **Service delegation**: `X-End-User-ID` header for service-to-service flows
-- **Multi-cloud portable**: PostgreSQL + pgvector + GCS works everywhere
+- **Deduplication**: SHA256 content hashing prevents duplicate uploads
+- **JWT/JWKS Auth**: Vendor-independent (Google, Azure AD, Auth0, Okta)
+- **Service Delegation**: `X-End-User-ID` header for service-to-service flows
 - **Cost-effective**: Cloud Run auto-scales to zero ($0-5/month)
-- **Local development**: Fast iteration with Cloud SQL Proxy and hot reload
-- **Comprehensive testing**: 69 tests (38 e2e, 23 integration, 8 unit - all passing)
+- **Comprehensive Testing**: 69 tests (38 e2e, 23 integration, 8 unit - all passing)
 
 ## Documentation
 
-- **[Development Guide](docs/development.md)** - Local setup, configuration, environment variables, logging
-- **[Deployment Guide](docs/deployment.md)** - Cloud Run deployment, infrastructure setup, cost estimates
-- **[API Reference](docs/api.md)** - REST API endpoints, request/response examples, MongoDB filters
-- **[Authentication](docs/authentication.md)** - JWT/JWKS, service delegation, protected metadata, multi-tenancy
-- **[Testing Guide](docs/testing.md)** - Running tests, writing tests, CI/CD integration, performance testing
-- **[File Validation](docs/file-validation.md)** - 3-tier validation, magic bytes, security considerations
-- **[Reranking Deep Dive](docs/reranking.md)** - LLM reranking implementation, performance optimization
-- **[E2E Testing](tests/e2e/README.md)** - End-to-end test workflow, markers, iterative development
+**📚 Complete technical guides (read these for details!):**
+
+- **[Development Guide](docs/development.md)** - Local setup, `.env.local` vs `.env` vs `.env.deploy`, logging
+- **[Deployment Guide](docs/deployment.md)** - Cloud Run deployment, infrastructure, cost estimates
+- **[API Reference](docs/api.md)** - REST API endpoints, MongoDB filters, request/response examples
+- **[Authentication](docs/authentication.md)** - JWT/JWKS, service delegation, multi-tenancy
+- **[Testing Guide](docs/testing.md)** - Running tests, writing tests, CI/CD, markers
+- **[File Validation](docs/file-validation.md)** - 3-tier validation, magic bytes, security
+- **[Reranking Deep Dive](docs/reranking.md)** - LLM reranking implementation, performance
+- **[E2E Testing](tests/e2e/README.md)** - End-to-end workflow, iterative development
 
 ## Architecture
+
+High-level system architecture (see [API Reference](docs/api.md) for details):
 
 ```
                     ┌─────────────────┐
@@ -38,311 +69,151 @@ Production-ready Retrieval Augmented Generation (RAG) system with:
             ▼                ▼                ▼                 ▼
     ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
     │  Vertex AI   │  │  Cloud SQL   │  │  Cloud       │  │  Gemini API  │
-    │  Embeddings  │  │  PostgreSQL  │  │  Storage     │  │  Generation  │
-    │  (pluggable) │  │  + pgvector  │  │  (GCS)       │  │  (future)    │
+    │  Embeddings  │  │  PostgreSQL  │  │  Storage     │  │  Reranking   │
+    │  (768-dim)   │  │  + pgvector  │  │  (GCS)       │  │  (optional)  │
     └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
-                             │                    │
-                       ┌─────┴────────┐   ┌──────┴───────┐
-                       │ Embeddings   │   │ Documents    │
-                       │ Metadata     │   │ Text         │
-                       │ Vector Search│   │ Chunks       │
-                       └──────────────┘   └──────────────┘
 ```
 
-### Hybrid Storage Architecture
+**Key Design Decisions:**
+- **Hybrid Storage:** PostgreSQL (embeddings + metadata) + GCS (documents/chunks) = 8.5x cheaper
+- **UUID-based:** Immutable, globally unique document identifiers
+- **Deduplication:** SHA256 content hashing prevents duplicate processing
+- **No Egress Costs:** Cloud Run + GCS in same region = $0 data transfer
 
-**PostgreSQL (Cloud SQL):** Embeddings + Metadata + Hybrid Search Fields
-```sql
-original_documents                 document_chunks
-─────────────────                 ────────────────
-id                                id
-doc_uuid (UUID) ◄─────────┐       original_doc_id (FK) ─┐
-filename                  │       embedding (VECTOR(768))│
-file_type                 │       chunk_index           │
-file_size                 │       created_at            │
-file_hash (SHA256) UNIQUE │                             │
-uploaded_by (TEXT)        │       CASCADE DELETE ◄──────┘
-uploaded_at (TIMESTAMP)   │
-uploaded_via (TEXT)       │
-metadata (JSONB)          │  ← User-defined fields only
-chunk_count               │     (department, tags, priority, etc.)
-summary (TEXT)            │     System fields are columns
-keywords (TEXT[])         │  ← GIN indexed for fast filtering
-token_count (INTEGER)     │  ← For BM25 length normalization
-                          │
-                          └── UNIQUE, globally unique identifier
-```
-
-**Google Cloud Storage:** Documents + Text + Chunks + BM25 Index
-```
-gs://raglab-documents/
-└── {doc_uuid}/                   # UUID-based flat structure
-    ├── document.pdf              # Original PDF file
-    ├── extracted.txt             # Full extracted text
-    ├── bm25_doc_index.json       # BM25 term frequencies (1-5KB)
-    └── chunks/
-        ├── 000.json             # {"text": "...", "index": 0, "metadata": {...}}
-        ├── 001.json
-        └── ...
-```
-
-**Why hybrid storage?**
-- **PostgreSQL**: Fast vector search on embeddings (5.6KB each)
-- **GCS**: Cheap storage for text/files ($0.02/GB vs $0.17/GB)
-- **No egress costs**: Cloud Run + GCS in same region = $0 egress
-- **Efficient RAG**: Fetch only needed chunks (3-5) not all 50
-- **Regeneration**: Keep extracted text for re-embedding without re-processing PDFs
-
-### LLM Models
-
-### LLM Models
-
-**Cost-optimized model selection:**
-- **Extraction:** `gemini-2.5-flash-lite` ($2.25/10K docs, 100% reliable)
-- **Reranking:** `gemini-2.5-flash-lite` (same model, unified config)
-
-**Key features:**
-- 5 retry attempts with exponential backoff
-- Separate env vars for independent optimization
-- See [Hybrid Search](docs/hybrid-search.md) for details
-
-**Environment variables:**
-```bash
-EMBEDDING_MODEL=text-embedding-005
-RERANKER_ENABLED=true
-RERANKER_MODEL=gemini-2.5-flash-lite
-LLM_EXTRACTION_MODEL=gemini-2.5-flash-lite
-```
-
-### Deduplication
-
-Documents are deduplicated using SHA256 file hashing:
-
-**How it works:**
-1. Calculate SHA256 hash of uploaded file content
-2. Check `original_documents.file_hash` (UNIQUE constraint)
-3. If duplicate found: return existing document info, skip processing
-4. If new: proceed with extraction, chunking, embedding
-
-**Benefits:**
-- Prevents wasted processing (no re-extraction, re-embedding)
-- Saves storage (no duplicate files in GCS)
-- Maintains referential integrity (same content = same UUID)
-- Fast check (indexed hash lookup)
-
-**Example:**
-```bash
-# First upload
-curl -X POST http://localhost:8080/v1/documents/upload -F "file=@doc.pdf"
-# → Processes document, creates chunks
-
-# Duplicate upload (same content, different filename)
-curl -X POST http://localhost:8080/v1/documents/upload -F "file=@doc_copy.pdf"
-# → Returns: "Document already exists (uploaded as 'doc.pdf'). Skipping duplicate."
-```
-
-**Note:** Deduplication is content-based, not filename-based. Same content with different names = duplicate.
+**For detailed architecture:** [Development Guide](docs/development.md) | [Deployment Guide](docs/deployment.md)
 
 ## Quick Start
-
-### Prerequisites
-
-1. **Python 3.12+**
-2. **PostgreSQL 15+ with pgvector**
-3. **Google Cloud Project** with Vertex AI enabled
-4. **GCP credentials** with required permissions
 
 ### Local Development
 
 ```bash
-# 1. Clone repository
-git clone <repository-url>
-cd rag-lab
-
-# 2. Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 3. Install dependencies
+# 1. Clone and setup
+git clone <repository-url> && cd rag-lab
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 4. Create .env.local file
+# 2. Configure environment
 cp .env.local.example .env.local
-# Edit .env.local with your configuration
-# See docs/development.md for details
+# Edit .env.local with your settings (see docs/development.md for details)
 
-# 5. Start server
+# 3. Start server with hot reload
 uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
-
-# Server runs at http://localhost:8080
-# Swagger UI at http://localhost:8080/docs
 ```
 
-**One-liner:**
-```bash
-cd rag-lab && source .venv/bin/activate && uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
-```
+**Server runs at:** http://localhost:8080 | **Swagger UI:** http://localhost:8080/docs
 
-For detailed setup options (Docker Compose, Cloud SQL Proxy, environment variables), see **[Development Guide](docs/development.md)**.
+**⚠️ Important:** See [Development Guide](docs/development.md) for:
+- `.env.local` vs `.env` vs `.env.deploy` (different purposes!)
+- Cloud SQL Proxy setup
+- Database connection strings
+- Authentication configuration
 
 ### Cloud Run Deployment
 
 ```bash
-# 1. Configure deployment
 cd deployment
 cp .env.deploy.example .env.deploy
-# Edit .env.deploy with your GCP settings
+# Edit .env.deploy (see docs/deployment.md)
 
-# 2. Setup infrastructure (one-time)
-python setup_infrastructure.py
-
-# 3. Deploy to Cloud Run
-python deploy_cloudrun.py
-
-# 4. Test deployment
-SERVICE_URL=$(gcloud run services describe rag-api --region us-central1 --format 'value(status.url)')
-curl $SERVICE_URL/health
+python setup_infrastructure.py  # One-time: creates Cloud SQL, GCS, Service Account
+python deploy_cloudrun.py       # Deploy to Cloud Run
 ```
 
-For detailed deployment instructions, cost estimates, and troubleshooting, see **[Deployment Guide](docs/deployment.md)**.
+**⚠️ Important:** See [Deployment Guide](docs/deployment.md) for:
+- Infrastructure resource planning
+- Cost estimates ($0-12/month breakdown)
+- Environment variable configuration
+- Troubleshooting common issues
 
 ## API Examples
 
-### Upload Document
+**Quick examples** (see [API Reference](docs/api.md) for complete documentation):
 
 ```bash
-curl -X POST http://localhost:8080/upload \
+# Upload document with metadata
+curl -X POST http://localhost:8080/v1/documents/upload \
   -F "files=@document.pdf" \
   -F 'metadata={"category":"technical","priority":"high"}'
-```
 
-### Hybrid Search with Reranking
-
-```bash
-curl -X POST http://localhost:8080/search \
+# Hybrid search with reranking
+curl -X POST http://localhost:8080/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "query": "How does authentication work?",
     "top_k": 10,
-    "metadata_filter": {"category": {"$eq": "technical"}},
+    "use_hybrid": true,
+    "filters": {"category": {"$eq": "technical"}},
     "rerank": true,
     "rerank_top_k": 5
   }'
 ```
 
-For complete API documentation (all endpoints, metadata filtering, error handling), see **[API Reference](docs/api.md)**.
+**For full API details:** [API Reference](docs/api.md)
 
 ## Testing
 
 ```bash
-# Run all tests (162 total)
+# Run all tests
 pytest -v
 
 # Run by category
-pytest tests/e2e/ -v           # 37 e2e tests
-pytest tests/integration/ -v   # 13 integration tests
-pytest tests/unit/ -v          # 112 unit tests
+pytest tests/e2e/ -v           # 38 end-to-end tests
+pytest tests/integration/ -v   # 23 integration tests  
+pytest tests/unit/ -v          # 8 unit tests
 
-# Run by marker
-pytest -m reranking -v         # LLM reranking tests
-pytest -m "not cleanup" -v     # Skip cleanup (iterative development)
-
-# Coverage report
-pytest --cov=src --cov-report=html
+# Run specific test markers
+pytest -m reranking -v         # Reranking tests only
+pytest -m "not cleanup" -v     # Skip cleanup (iterative dev)
 ```
 
-For detailed testing guide (workflow, fixtures, writing tests, CI/CD), see **[Testing Guide](docs/testing.md)** and **[E2E Testing](tests/e2e/README.md)**.
+**For testing details:** [Testing Guide](docs/testing.md) | [E2E Testing](tests/e2e/README.md)
 
 ## Project Structure
 
 ```
 rag-lab/
-├── src/
-│   ├── main.py                    # FastAPI app, upload endpoint
-│   ├── database.py                # PostgreSQL + pgvector
-│   ├── storage.py                 # GCS operations
-│   ├── logging_config.py          # Rotating logs with timestamps
-│   ├── auth/
-│   │   ├── jwt_auth.py            # JWT/JWKS validation
-│   │   └── metadata_protection.py # Protected metadata fields
-│   ├── extraction/
-│   │   ├── pdf_extractor.py       # PDF → Markdown (pypdfium2, PyPDF2)
-│   │   ├── html_extractor.py      # HTML → Markdown (beautifulsoup4)
-│   │   ├── text_extractor.py      # TXT/MD direct read
-│   │   ├── structured_extractor.py # JSON/XML → YAML
-│   │   └── code_extractor.py      # Python/JS/Java/etc extraction
-│   ├── chunking/
-│   │   └── chunker.py             # Semantic chunking
-│   ├── embedding/
-│   │   └── embedder.py            # Vertex AI text-embedding-005
-│   ├── reranking/
-│   │   └── gemini.py              # Async batch reranking (10 parallel, batch_size=2)
-│   └── validation/
-│       └── file_validator.py      # 3-tier validation (extension, magic bytes, extraction)
-├── tests/
-│   ├── unit/                      # 112 tests (isolated functions)
-│   │   ├── test_filter_parser.py  # 65 tests (MongoDB operators)
-│   │   ├── test_reranking.py      # 6 tests (keyword trap)
-│   │   └── test_file_validator.py # 17 tests (3-tier validation)
-│   ├── integration/               # 13 tests (real Vertex AI)
-│   └── e2e/                       # 37 tests (full HTTP workflow)
-│       ├── test_full_rag_workflow.py
-│       └── README.md              # E2E testing guide
-├── deployment/
-│   ├── setup_infrastructure.py    # GCP infrastructure automation
-│   ├── deploy_cloudrun.py         # Cloud Run deployment
-│   └── teardown.py                # Cleanup resources
-├── docs/
-│   ├── development.md             # Local setup, configuration, logging
-│   ├── deployment.md              # Cloud Run deployment, cost estimates
-│   ├── api.md                     # REST API reference
-│   ├── authentication.md          # JWT/JWKS, multi-tenancy
-│   ├── testing.md                 # Testing guide, CI/CD
-│   ├── file-validation.md         # 3-tier validation, magic bytes
-│   └── reranking.md               # LLM reranking deep dive
-├── pyproject.toml                 # pytest config, markers
-├── Dockerfile                     # Multi-stage production build
-├── docker-compose.yaml            # Local development stack
-├── requirements.txt               # Python dependencies
-└── README.md                      # This file
+├── src/                           # Application code
+│   ├── main.py                   # FastAPI app + endpoints
+│   ├── database.py               # PostgreSQL + pgvector
+│   ├── storage.py                # GCS operations
+│   ├── auth/                     # JWT/JWKS validation
+│   ├── extraction/               # PDF, HTML, JSON, XML, code extractors
+│   ├── chunking/                 # Semantic chunking
+│   ├── embedding/                # Vertex AI embeddings
+│   ├── reranking/                # Gemini LLM reranking
+│   └── validation/               # 3-tier file validation
+├── tests/                         # 69 tests (38 e2e, 23 integration, 8 unit)
+│   ├── unit/                     # Isolated function tests
+│   ├── integration/              # Real Vertex AI tests
+│   └── e2e/                      # Full HTTP workflow tests
+├── deployment/                    # Cloud Run deployment scripts
+├── docs/                          # Detailed technical guides
+├── .env.local                     # Local development config (gitignored)
+├── .env                           # Cloud Run production config (gitignored)
+└── deployment/.env.deploy         # Infrastructure config (gitignored)
 ```
 
-## Features
-
-✅ **Implemented:**
-- **Multi-format upload:** 17 formats (PDF→MD, HTML→MD, TXT, MD, JSON→YAML, XML→YAML, CSV, YAML, code, logs)
-- **Smart document processing:** 
-  - PDF/HTML → Markdown (preserves structure: headings, tables, lists)
-  - JSON/XML → YAML (minimizes syntax noise, maintains semantics)
-  - Text formats → direct UTF-8 extraction
-- **File validation:** 3-tier strategy (strict/structured/lenient) with magic bytes detection
-- **SHA256 deduplication:** Content-based duplicate detection
-- **LLM reranking:** Gemini 2.5-flash-lite async batch reranking (2 docs/batch, 10 parallel)
-  - Reasoning explanation for each document
-  - Fast and reliable (100% success rate)
-  - Deterministic keyword trap test validates semantic understanding
-- **Vector similarity search:** PostgreSQL + pgvector (768-dim embeddings)
-- **Hybrid storage:** PostgreSQL (metadata + vectors) + GCS (files + text)
-- **CRUD operations:** Upload, list, query, delete (by ID or hash)
-- **Google Gen AI SDK:** text-embedding-005 embeddings (768 dimensions)
-- **JWT/JWKS authentication:** Vendor-independent OAuth2 (Google, Azure AD, Auth0, Okta)
-- **Metadata filtering:** MongoDB Query Language (12 operators: $and, $or, $not, etc.)
-- **Rotating logs:** Timestamp-based sessions with automatic retention (10MB × 10 files)
-- **Local development:** uvicorn hot reload + Cloud SQL Proxy
-- **Automated deployment:** GCP infrastructure setup + Cloud Run
-- **Comprehensive testing:** 162 tests (37 e2e, 13 integration, 112 unit)
-- **Test fixtures:** 17 documents covering all supported formats + keyword trap scenarios
+**For complete structure:** See respective documentation in `docs/`
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for detailed feature planning and implementation status.
+Current version: **0.3.0** - Hybrid Search Complete
 
-**Current focus:** Phase 3 - Query endpoint integration (BM25 scoring + RRF fusion)
+See [ROADMAP.md](ROADMAP.md) for:
+- Detailed feature planning
+- Implementation timeline
+- Priority levels (P1-P4)
+- Cost estimates
 
-## License
-
-MIT
+**Next priorities:**
+1. Schema Migrations (P1, 12-16h)
+2. Parent Document Retrieval (P2, 10h)
+3. Async Processing (P3, 10h)
 
 ## Contributing
 
 PRs welcome! This is a learning project exploring production RAG architectures.
+
+## License
+
+MIT

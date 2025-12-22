@@ -16,6 +16,9 @@ cp .env.deploy.example .env.deploy
 #   GCP_PROJECT_ID=your-project-id
 #   GCP_REGION=us-central1
 #   DEPLOYMENT_AUTH_MODE=gcloud
+# 
+# For details on .env.deploy vs .env vs .env.local, see:
+# docs/development.md#configuration-files
 
 # 2. Setup GCP infrastructure (one-time)
 # Creates: Cloud SQL, GCS bucket, Service Account, enables APIs
@@ -25,7 +28,7 @@ python setup_infrastructure.py
 # - Cloud SQL PostgreSQL 15 with pgvector
 # - GCS bucket in same region ($0 egress)
 # - Service Account with IAM roles
-# - .env file with connection details
+# - Root .env file with application config (NOT .env.deploy!)
 # - deployment/credentials.txt with all info
 
 # 3. Deploy to Cloud Run

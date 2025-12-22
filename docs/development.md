@@ -41,14 +41,20 @@ cp .env.local.example .env.local
 
 ### 3. `.env.deploy` (Deployment Configuration)
 
-**Purpose:** Infrastructure setup parameters (not runtime config)  
-**Contains:** GCP project, region, resource names, sizing  
+**Purpose:** Infrastructure setup and deployment process parameters (NOT runtime config)  
+**Contains:** GCP project/region, resource names (buckets, instances), Cloud Run sizing (memory/CPU)  
+**Does NOT contain:** Application config (embedding models, reranking, auth, logging)  
 **Template:** [deployment/.env.deploy.example](../deployment/.env.deploy.example)
 
 **Use when:**
-- Running `deployment/setup_infrastructure.py`
-- Configuring Cloud Run memory/CPU limits
+- Running `deployment/setup_infrastructure.sh` or `setup_infrastructure.py`
+- Configuring Cloud Run resource limits (memory, CPU, instances)
 - Setting up GCP resources for first time
+
+**Example parameters:**
+- `GCP_PROJECT_ID`, `GCP_REGION`
+- `GCS_BUCKET`, `CLOUD_SQL_INSTANCE`, `SERVICE_ACCOUNT_NAME`
+- `CLOUD_RUN_MEMORY`, `CLOUD_RUN_CPU`, `CLOUD_RUN_MAX_INSTANCES`
 
 ```bash
 # Copy template
@@ -60,11 +66,15 @@ cp deployment/.env.deploy.example deployment/.env.deploy
 
 **Quick Reference:**
 
-| File | Purpose | Database Connection | When to Use |
-|------|---------|-------------------|-------------|
-| `.env.local` | Local dev | Cloud SQL Proxy (localhost:5432) | `uvicorn` locally |
-| `.env` | Production | Unix socket `/cloudsql/...` | Cloud Run deployment |
-| `.env.deploy` | Infrastructure | N/A (setup only) | `setup_infrastructure.py` |
+| File | Purpose | What It Contains | When to Use |
+|------|---------|------------------|-------------|
+| `.env.local` | Local development | App config + localhost DB connection | `uvicorn` locally |
+| `.env` | Production runtime | App config + Cloud SQL socket | Deployed service in Cloud Run |
+| `.env.deploy` | Deployment process | Infrastructure settings (no app config) | `setup_infrastructure.sh` |
+
+**Key Difference:**
+- `.env.local` and `.env` = **application configuration** (embedding models, reranking, JWT auth, logging)
+- `.env.deploy` = **infrastructure configuration** (project ID, resource names, Cloud Run sizing)
 
 ---
 
