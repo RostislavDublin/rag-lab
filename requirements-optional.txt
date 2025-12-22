@@ -1,0 +1,6 @@
+# Optional dependencies for on-premise embedding/reranking providers
+# Install with: pip install -r requirements-base.txt -r requirements-optional.txt
+
+# For vendor-independent deployment (without Vertex AI)
+sentence-transformers>=2.3.0  # Local embeddings + cross-encoder reranking
+torch>=2.0.0  # Required by sentence-transformers (use CPU-only in Docker)

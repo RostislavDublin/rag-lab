@@ -47,6 +47,7 @@ Production-ready Retrieval Augmented Generation (RAG) system with hybrid storage
 **📚 Complete technical guides (read these for details!):**
 
 - **[Development Guide](docs/development.md)** - Local setup, `.env.local` vs `.env` vs `.env.deploy`, logging
+- **[Dependencies Architecture](docs/dependencies.md)** - Modular dependencies, provider selection, build optimization
 - **[Deployment Guide](docs/deployment.md)** - Cloud Run deployment, infrastructure, cost estimates
 - **[API Reference](docs/api.md)** - REST API endpoints, MongoDB filters, request/response examples
 - **[Authentication](docs/authentication.md)** - JWT/JWKS, service delegation, multi-tenancy
@@ -90,7 +91,12 @@ High-level system architecture (see [API Reference](docs/api.md) for details):
 # 1. Clone and setup
 git clone <repository-url> && cd rag-lab
 python3 -m venv .venv && source .venv/bin/activate
+
+# Install dependencies (base + optional providers)
 pip install -r requirements.txt
+
+# OR install only Vertex AI providers (no torch/sentence-transformers):
+# pip install -r requirements-base.txt
 
 # 2. Configure environment
 cp .env.local.example .env.local
@@ -98,6 +104,29 @@ cp .env.local.example .env.local
 
 # 3. Start server with hot reload
 uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+### Production Deployment (Cloud Run with CI/CD)
+
+```bash
+# 1. Setup infrastructure (one-time)
+cd deployment
+cp .env.deploy.example .env.deploy
+# Edit: GCP_PROJECT_ID, GCP_REGION, GITHUB_REPO_OWNER, GITHUB_REPO_NAME
+./setup-infrastructure.sh
+./setup-cloudbuild-trigger.sh  # Connects GitHub, creates trigger
+
+# 2. Configure and upload secrets
+cd ..
+cp .env.example .env
+# Edit .env with production settings
+cd deployment && ./upload-secrets.sh
+
+# 3. Create deploy branch and push
+git checkout -b deploy/production
+git push origin deploy/production  # Auto-deploys via Cloud Build!
+
+# See deployment/CLOUDBUILD_SETUP.md for complete guide
 ```
 
 **Server runs at:** http://localhost:8080 | **Swagger UI:** http://localhost:8080/docs
@@ -112,17 +141,27 @@ uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
 
 ```bash
 cd deployment
-cp .env.deploy.example .env.deploy
-# Edit .env.deploy (see docs/deployment.md)
 
-python setup_infrastructure.py  # One-time: creates Cloud SQL, GCS, Service Account
-python deploy_cloudrun.py       # Deploy to Cloud Run
+# 1. Setup infrastructure (one-time)
+cp .env.deploy.example .env.deploy
+# Edit .env.deploy with GCP project/region
+./setup-infrastructure.sh  # Creates Cloud SQL, GCS, Service Account
+
+# 2. Configure application
+cd ..
+cp .env.example .env
+# Edit .env with all app settings (embeddings, reranking, auth, secrets)
+
+# 3. Deploy
+cd deployment
+./deploy-cloudrun.sh  # Uploads .env to Secret Manager, builds & deploys
 ```
 
 **⚠️ Important:** See [Deployment Guide](docs/deployment.md) for:
+- **Secret Manager setup** (configuration mounted as volume, not in image)
 - Infrastructure resource planning
 - Cost estimates ($0-12/month breakdown)
-- Environment variable configuration
+- Platform portability strategy
 - Troubleshooting common issues
 
 ## API Examples

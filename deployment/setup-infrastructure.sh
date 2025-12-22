@@ -104,6 +104,7 @@ APIS=(
     "storage.googleapis.com"
     "compute.googleapis.com"
     "servicenetworking.googleapis.com"
+    "secretmanager.googleapis.com"
 )
 
 for api in "${APIS[@]}"; do

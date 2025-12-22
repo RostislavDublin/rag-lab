@@ -1,0 +1,43 @@
+# Core dependencies for RAG Lab
+# Base requirements - always needed regardless of provider choice
+
+# Google Gen AI SDK
+google-genai>=0.3.0  # New Google Gen AI SDK (replaces deprecated vertexai modules)
+google-cloud-aiplatform>=1.38.0
+google-cloud-storage>=2.10.0
+vertexai>=1.0.0  # Keep for initialization only
+
+# FastAPI and web server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+nltk>=3.8.0  # Natural Language Toolkit for stemming/tokenization
+
+# Vector operations
+faiss-cpu>=1.7.4
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.65.0
+
+# PostgreSQL + pgvector (vector storage - multi-cloud portable!)
+psycopg2-binary>=2.9.9
+pgvector>=0.2.3
+asyncpg>=0.29.0  # Async PostgreSQL driver for FastAPI
+
+# Authentication (vendor-independent JWT tokens with JWKS support)
+PyJWT[crypto]>=2.8.0  # JWT encoding/decoding + JWKS client (PyJWKClient)
+cryptography>=41.0.0  # Required for JWT RS256 algorithm
+
+# Document processing
+pymupdf>=1.23.0  # PDF text extraction
+pymupdf4llm>=0.2.7  # LLM-optimized PDF extraction
+pymupdf_layout==1.26.6  # Improved PDF layout analysis
+pyyaml>=6.0  # YAML parsing and generation (for structured data conversion)
+xmltodict>=0.13.0  # Clean XML to dict conversion
+python-magic>=0.4.27  # Content-based file type detection (magic bytes)

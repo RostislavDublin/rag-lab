@@ -10,8 +10,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-base.txt .
+
+# Production: Install only base dependencies (Vertex AI providers)
+# This excludes sentence-transformers + torch (saves ~150MB and ~5 minutes build time)
+RUN pip install --no-cache-dir -r requirements-base.txt
+
+# Optional: For on-premise embeddings/reranking, uncomment these lines:
+# COPY requirements-optional.txt .
+# RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# RUN pip install --no-cache-dir -r requirements-optional.txt
 
 # Production stage
 FROM python:3.11-slim
@@ -25,6 +33,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY src/ ./src/
 COPY data/.gitkeep ./data/.gitkeep
+
+# .env will be mounted from Secret Manager at runtime (not included in image)
 
 # Cloud Run expects port 8080
 ENV PORT=8080

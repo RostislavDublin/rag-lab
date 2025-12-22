@@ -78,6 +78,87 @@ cp deployment/.env.deploy.example deployment/.env.deploy
 
 ---
 
+## Dependencies
+
+### Requirements Structure
+
+The project uses modular dependency files following the factory pattern architecture:
+
+```
+requirements-base.txt      # Core dependencies (always needed)
+├── FastAPI, uvicorn       # Web framework
+├── PostgreSQL + pgvector  # Vector storage
+├── Google Gen AI SDK      # Vertex AI embeddings/reranking
+├── PyJWT + cryptography   # Authentication
+└── Document processing    # pymupdf, pyyaml, etc.
+
+requirements-optional.txt  # Optional provider implementations
+├── sentence-transformers  # On-premise embeddings
+└── torch                  # Required by sentence-transformers
+
+requirements.txt           # Convenience file for local development
+└── Includes base + optional
+```
+
+**When to use each file:**
+
+| File | Use Case | Includes | Size Impact |
+|------|----------|----------|-------------|
+| `requirements.txt` | Local development | Base + Optional | ~300MB |
+| `requirements-base.txt` | Production (Vertex AI only) | Core only | ~150MB |
+| `requirements-optional.txt` | On-premise deployment | sentence-transformers + torch | +150MB |
+
+**Installation:**
+
+```bash
+# Local development (all providers)
+pip install -r requirements.txt
+
+# Production (Vertex AI only - recommended)
+pip install -r requirements-base.txt
+
+# On-premise (no cloud dependencies)
+pip install -r requirements-base.txt -r requirements-optional.txt
+```
+
+**Provider Selection:**
+
+Dependencies are loaded dynamically based on configuration:
+
+```bash
+# Use Vertex AI (requires requirements-base.txt)
+EMBEDDING_PROVIDER=vertex_ai
+RERANKING_PROVIDER=vertex_ai
+
+# Use on-premise (requires requirements-optional.txt)
+EMBEDDING_PROVIDER=sentence_transformers
+RERANKING_PROVIDER=local
+```
+
+**Build Time Impact:**
+
+| Configuration | First Build | Cached Build | Image Size |
+|--------------|-------------|--------------|------------|
+| Base only (Vertex AI) | ~5 minutes | ~30 seconds | ~400MB |
+| Base + Optional | ~10 minutes | ~30 seconds | ~550MB |
+
+**Docker Production:**
+
+Production Dockerfile uses `requirements-base.txt` by default:
+
+```dockerfile
+# Default: Vertex AI providers only
+COPY requirements-base.txt .
+RUN pip install --no-cache-dir -r requirements-base.txt
+
+# To enable on-premise providers, uncomment:
+# COPY requirements-optional.txt .
+# RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# RUN pip install --no-cache-dir -r requirements-optional.txt
+```
+
+---
+
 ## Local Development Setup
 
 ### Option 1: uvicorn with Hot Reload (Recommended)
@@ -108,8 +189,18 @@ EOF
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate
+   
+   # Install all dependencies (includes optional providers)
    pip install -r requirements.txt
+   
+   # OR install only base dependencies (Vertex AI providers only):
+   # pip install -r requirements-base.txt
    ```
+   
+   **Dependencies structure:**
+   - `requirements-base.txt` - Core dependencies (Vertex AI, FastAPI, PostgreSQL, etc.)
+   - `requirements-optional.txt` - Optional providers (sentence-transformers, torch for on-premise embeddings/reranking)
+   - `requirements.txt` - All dependencies (includes base + optional)
 
 **Start Server:**
 

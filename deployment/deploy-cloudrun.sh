@@ -22,21 +22,28 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Load Configuration
 # =============================================================================
 
-print_info "Loading configuration from .env..."
+print_info "Loading deployment configuration from .env.deploy..."
 
-if [ ! -f "../.env" ]; then
-    print_error ".env file not found. Run setup-infrastructure.sh first!"
+if [ ! -f ".env.deploy" ]; then
+    print_error ".env.deploy file not found!"
     exit 1
 fi
 
-# Load environment variables
+# Load deployment config (GCP project, region, resource names, Cloud Run settings)
 set -a
-source ../.env
+source .env.deploy
 set +a
 
-# Validate required variables
-if [ -z "$GCP_PROJECT_ID" ] || [ -z "$GCS_BUCKET" ] || [ -z "$DATABASE_URL" ]; then
-    print_error "Missing required environment variables in .env"
+print_info "Checking application configuration file..."
+
+if [ ! -f "../.env" ]; then
+    print_error ".env file not found. Create it manually with all app config and secrets!"
+    exit 1
+fi
+
+# Validate required variables from .env.deploy
+if [ -z "$GCP_PROJECT_ID" ] || [ -z "$GCS_BUCKET" ] || [ -z "$CLOUD_RUN_SERVICE" ]; then
+    print_error "Missing required variables in .env.deploy"
     exit 1
 fi
 
@@ -44,20 +51,62 @@ print_info "Configuration loaded successfully"
 echo "  Project: $GCP_PROJECT_ID"
 echo "  Region: $GCP_REGION"
 echo "  Bucket: $GCS_BUCKET"
+echo "  Service: $CLOUD_RUN_SERVICE"
 echo ""
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-SERVICE_NAME="raglab"
+# Cloud Run settings from .env.deploy
+SERVICE_NAME="${CLOUD_RUN_SERVICE:-raglab}"
 REGION="${GCP_REGION:-us-central1}"
-MEMORY="1Gi"
-CPU="1"
-MAX_INSTANCES="10"
-MIN_INSTANCES="0"
-TIMEOUT="300"
-CONCURRENCY="80"
+MEMORY="${CLOUD_RUN_MEMORY:-1Gi}"
+CPU="${CLOUD_RUN_CPU:-1}"
+MAX_INSTANCES="${CLOUD_RUN_MAX_INSTANCES:-10}"
+MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES:-0}"
+TIMEOUT="${CLOUD_RUN_TIMEOUT:-300}"
+CONCURRENCY="${CLOUD_RUN_CONCURRENCY:-80}"
+SECRET_NAME="${SECRET_NAME:-raglab-config}"
+
+# =============================================================================
+# Upload Configuration to Secret Manager
+# =============================================================================
+
+print_info "Checking Secret Manager API..."
+
+# Check if Secret Manager API is enabled
+if ! gcloud services list --enabled --project="$GCP_PROJECT_ID" --filter="name:secretmanager.googleapis.com" --format="value(name)" | grep -q "secretmanager.googleapis.com"; then
+    print_error "Secret Manager API is not enabled!"
+    print_error "Run: gcloud services enable secretmanager.googleapis.com --project=$GCP_PROJECT_ID"
+    print_error "Or add it to setup-infrastructure.sh and re-run setup"
+    exit 1
+fi
+
+print_info "Uploading .env to Secret Manager as '$SECRET_NAME'..."
+
+# Check if secret exists
+if gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT_ID" &>/dev/null; then
+    print_info "Secret exists, creating new version..."
+    gcloud secrets versions add "$SECRET_NAME" \
+        --data-file="../.env" \
+        --project="$GCP_PROJECT_ID"
+else
+    print_info "Creating new secret..."
+    gcloud secrets create "$SECRET_NAME" \
+        --data-file="../.env" \
+        --replication-policy="automatic" \
+        --project="$GCP_PROJECT_ID"
+fi
+
+# Grant service account access to the secret
+print_info "Granting service account access to secret..."
+gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
+    --member="serviceAccount:${SERVICE_ACCOUNT_EMAIL}" \
+    --role="roles/secretmanager.secretAccessor" \
+    --project="$GCP_PROJECT_ID"
+
+print_info "Configuration uploaded to Secret Manager"
 
 # =============================================================================
 # Build and Deploy
@@ -75,7 +124,7 @@ cd ..
 # Build container image
 gcloud builds submit \
     --tag "gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}:latest" \
-    --timeout=600s
+    --timeout=1200s  # 20 minutes for large image with torch/CUDA
 
 print_info "Container built successfully"
 
@@ -84,8 +133,9 @@ print_info "Container built successfully"
 # =============================================================================
 
 print_info "Deploying to Cloud Run..."
+print_info "Configuration will be mounted from Secret Manager as /app/.env"
 
-# Deploy
+# Deploy with Secret Manager volume mount
 gcloud run deploy "$SERVICE_NAME" \
     --image "gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}:latest" \
     --region "$REGION" \
@@ -97,11 +147,10 @@ gcloud run deploy "$SERVICE_NAME" \
     --concurrency "$CONCURRENCY" \
     --max-instances "$MAX_INSTANCES" \
     --min-instances "$MIN_INSTANCES" \
-    --set-env-vars "GCP_PROJECT_ID=${GCP_PROJECT_ID}" \
-    --set-env-vars "GCP_LOCATION=${GCP_REGION}" \
-    --set-env-vars "GCS_BUCKET=${GCS_BUCKET}" \
-    --set-env-vars "DATABASE_URL=${DATABASE_URL}" \
     --service-account "${SERVICE_ACCOUNT_EMAIL}" \
+    --add-cloudsql-instances "${CLOUD_SQL_CONNECTION_NAME}" \
+    --add-volume name=config,type=secret,secret-name="$SECRET_NAME" \
+    --add-volume-mount volume=config,mount-path=/app/.env \
     --quiet
 
 print_info "Deployment completed successfully!"

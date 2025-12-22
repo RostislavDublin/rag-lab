@@ -4,40 +4,137 @@ This guide covers deploying RAG Lab to Google Cloud Run and other platforms.
 
 ## Cloud Run Deployment
 
-### Automated Setup (Recommended)
+### Automated Deployment via GitHub CI/CD (Recommended)
 
-Complete infrastructure setup and deployment using Python scripts:
+Complete CI/CD pipeline from GitHub → Cloud Build → Cloud Run.
+
+**One-time setup (5 minutes):**
 
 ```bash
-# 1. Configure deployment
+# 1. Setup infrastructure (one-time)
 cd deployment
 cp .env.deploy.example .env.deploy
-# Edit .env.deploy with your settings:
-#   GCP_PROJECT_ID=your-project-id
-#   GCP_REGION=us-central1
-#   DEPLOYMENT_AUTH_MODE=gcloud
-# 
-# For details on .env.deploy vs .env vs .env.local, see:
-# docs/development.md#configuration-files
+# Edit .env.deploy with your GCP project ID, region, and GitHub repo info
 
-# 2. Setup GCP infrastructure (one-time)
-# Creates: Cloud SQL, GCS bucket, Service Account, enables APIs
-python setup_infrastructure.py
+# Run infrastructure setup
+./setup-infrastructure.sh
+# Creates: Cloud SQL, GCS bucket, Service Account, IAM roles
 
-# This creates:
-# - Cloud SQL PostgreSQL 15 with pgvector
-# - GCS bucket in same region ($0 egress)
-# - Service Account with IAM roles
-# - Root .env file with application config (NOT .env.deploy!)
-# - deployment/credentials.txt with all info
+# 2. Setup Cloud Build trigger (one-time)
+./setup-cloudbuild-trigger.sh
+# Creates: Cloud Build trigger, GitHub connection, IAM permissions
+# Note: Requires one manual step - connecting GitHub repo via browser (OAuth)
 
-# 3. Deploy to Cloud Run
-python deploy_cloudrun.py
+# 3. Prepare application configuration
+cd ..
+cp .env.example .env
+# Edit .env with all application settings (embedding models, reranking, auth, secrets)
 
-# 4. Test deployment
-SERVICE_URL=$(gcloud run services describe rag-api --region us-central1 --format 'value(status.url)')
-curl $SERVICE_URL/health
+# Upload secrets to Secret Manager
+cd deployment
+./upload-secrets.sh
+# Uploads .env to Secret Manager (encrypted, versioned)
+
+# 4. Create deploy branch
+cd ..
+git checkout -b deploy/production
+git push origin deploy/production
 ```
+
+**Regular deployment workflow:**
+
+```bash
+# Work on main branch
+git checkout main
+# ... make changes, commit ...
+git push origin main
+
+# When ready to deploy
+git checkout deploy/production
+git merge main
+git push origin deploy/production  # ← Triggers Cloud Build automatically!
+
+# Monitor deployment
+open "https://console.cloud.google.com/cloud-build/builds?project=YOUR_PROJECT"
+```
+
+**What happens on push to deploy/production:**
+1. GitHub webhook triggers Cloud Build
+2. Build Docker image (~5 min first time, ~2 min cached)
+3. Push to Container Registry
+4. Deploy to Cloud Run with secrets mounted
+5. Service available at Cloud Run URL
+
+**See [deployment/CLOUDBUILD_SETUP.md](../deployment/CLOUDBUILD_SETUP.md) for complete documentation.**
+
+---
+
+### Manual Deployment (Alternative)
+
+For testing or one-off deployments:
+
+```bash
+# After infrastructure setup
+cd deployment
+./deploy-cloudrun.sh
+
+# This will:
+# - Upload .env to Secret Manager
+# - Build Docker image with Cloud Build (~5 minutes)
+# - Deploy to Cloud Run
+# - Test health endpoint
+```
+
+### Configuration Files
+
+**See [Configuration Files](development.md#configuration-files) for detailed explanation.**
+
+**Quick reference:**
+- `.env.local` - Local development (localhost DB connection)
+- `.env` - Production runtime (uploaded to Secret Manager, mounted in Cloud Run)
+- `deployment/.env.deploy` - Deployment process (GCP project, region, Cloud Run settings)
+
+### How Configuration Works in Production
+
+**Key principle**: Application reads from `.env` file the same way locally and in Cloud Run.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ Local Development                                                   │
+├─────────────────────────────────────────────────────────────────────┤
+│ .env.local (on disk) → Application reads via python-dotenv          │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ Production (Cloud Run)                                              │
+├─────────────────────────────────────────────────────────────────────┤
+│ 1. DevOps uploads .env to Secret Manager (during deploy)           │
+│ 2. Secret Manager mounts as volume → /app/.env (at runtime)        │
+│ 3. Application reads /app/.env via python-dotenv                    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Benefits:**
+- ✅ Secrets not included in Docker image
+- ✅ Configuration updated without rebuilding container
+- ✅ Same code path for local and production
+- ✅ Platform-portable (Secret Manager is GCP-specific, but app code is not)
+
+**Updating configuration in production:**
+```bash
+# Edit .env with new values
+vim .env
+
+# Re-run deploy script (only updates secret and redeploys, no rebuild)
+cd deployment
+./deploy-cloudrun.sh
+```
+
+**Secret Manager costs:**
+- Storage: $0.06/month per active secret version
+- Access: $0.03 per 10,000 operations
+- Free tier: 6 secrets free
+- **Your cost**: ~$0.06/month (within free tier)
 
 ### Manual Setup
 
@@ -50,6 +147,7 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   sqladmin.googleapis.com \
   storage.googleapis.com \
+  secretmanager.googleapis.com \
   aiplatform.googleapis.com
 
 # 2. Create Cloud SQL (takes 5-10 minutes)
@@ -70,14 +168,37 @@ gcloud storage buckets create gs://YOUR_PROJECT_ID-rag-documents \
   --location=us-central1 \
   --uniform-bucket-level-access
 
-# 5. Deploy
-gcloud run deploy rag-api \
-  --source . \
+# 5. Create Secret Manager secret with .env file
+gcloud secrets create raglab-config \
+  --data-file=.env \
+  --replication-policy=automatic
+
+# 6. Create service account and grant permissions
+gcloud iam service-accounts create rag-service
+SA_EMAIL="rag-service@YOUR_PROJECT_ID.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+  --member="serviceAccount:$SA_EMAIL" \
+  --role="roles/cloudsql.client"
+  
+gcloud secrets add-iam-policy-binding raglab-config \
+  --member="serviceAccount:$SA_EMAIL" \
+  --role="roles/secretmanager.secretAccessor"
+
+# 7. Build and deploy
+gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/raglab:latest
+
+gcloud run deploy raglab \
+  --image gcr.io/YOUR_PROJECT_ID/raglab:latest \
   --region us-central1 \
   --platform managed \
   --allow-unauthenticated \
-  --add-cloudsql-instances=PROJECT:REGION:rag-postgres \
-  --set-env-vars "GCP_PROJECT_ID=YOUR_PROJECT,GCS_BUCKET=YOUR_BUCKET,DATABASE_URL=postgresql://..."
+  --service-account $SA_EMAIL \
+  --add-cloudsql-instances=YOUR_PROJECT_ID:us-central1:rag-postgres \
+  --add-volume name=config,type=secret,secret-name=raglab-config \
+  --add-volume-mount volume=config,mount-path=/app/.env \
+  --memory 1Gi \
+  --cpu 1
 ```
 
 ### Cleanup
@@ -86,11 +207,50 @@ Remove all infrastructure when done:
 
 ```bash
 cd deployment
+
+# Option 1: Automated teardown (if you have teardown script)
 python teardown.py
 # Type 'DELETE-ALL' to confirm
+
+# Option 2: Manual cleanup
+# Delete Cloud Run service
+gcloud run services delete raglab --region us-central1
+
+# Delete Secret Manager secret
+gcloud secrets delete raglab-config
+
+# Delete Cloud SQL instance
+gcloud sql instances delete rag-postgres
+
+# Delete GCS bucket
+gcloud storage rm -r gs://YOUR_PROJECT_ID-rag-documents
+
+# Delete service account
+gcloud iam service-accounts delete rag-service@YOUR_PROJECT_ID.iam.gserviceaccount.com
 ```
 
-## Multi-Cloud Portability
+## Platform Portability
+
+### Configuration Strategy
+
+RAG Lab uses **volume-mounted configuration files** for maximum portability:
+
+```python
+# Application code (platform-agnostic)
+from dotenv import load_dotenv
+load_dotenv()  # Reads .env from current directory
+```
+
+**Platform-specific delivery mechanisms:**
+- **Local**: `.env.local` on disk
+- **GCP Cloud Run**: `.env` from Secret Manager → volume mount
+- **Kubernetes**: `.env` from Secret → volumeMount
+- **AWS ECS**: `.env` from SSM Parameter Store → volume
+- **Docker Compose**: `.env` via bind mount
+
+✅ **Same application code across all platforms**  
+✅ **No cloud-specific SDKs in application code**  
+✅ **Easy migration between platforms**
 
 ### Storage (PostgreSQL + pgvector)
 
@@ -111,7 +271,9 @@ python teardown.py
 **Alternatives:**
 - gemini-embedding-001 (up to 3072 dimensions) - latest unified model, superior quality, supports multilingual
 - text-embedding-004 (768 dimensions) - older stable model
-- sentence-transformers (local, 384 dimensions) - 100% portable, no API costs
+- sentence-transformers (on-premise, 384 dimensions) - 100% portable, no API costs
+
+**Note:** sentence-transformers requires `requirements-optional.txt` (adds torch ~150MB). Production Dockerfile uses only `requirements-base.txt` by default (Vertex AI providers). For on-premise deployment, uncomment optional dependencies in Dockerfile.
 
 **To upgrade to gemini-embedding-001:**
 - Same 768 dimensions: drop-in replacement, no schema changes needed
