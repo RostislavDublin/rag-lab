@@ -26,6 +26,8 @@ steps:
     args:
       - 'build'
       - '--cache-from=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
+      - '--build-arg'
+      - 'BUILDKIT_INLINE_CACHE=1'
       - '-t'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '.'
@@ -70,8 +72,7 @@ steps:
       - '--min-instances=0'
       - '--service-account=rag-service@$PROJECT_ID.iam.gserviceaccount.com'
       - '--add-cloudsql-instances=$PROJECT_ID:us-central1:rag-postgres'
-      - '--add-volume=name=config,type=secret,secret-name=raglab-config'
-      - '--add-volume-mount=volume=config,mount-path=/app/.env'
+      - '--update-secrets=/app/.env=raglab-config:latest'
 
 # Build timeout (total for all steps)
 timeout: 1800s  # 30 minutes
