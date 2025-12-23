@@ -85,24 +85,54 @@ else
     echo -e "${GREEN}✓ GitHub connection exists${NC}"
 fi
 
-# Step 2: Enable Cloud Build API
+# Step 2: Enable APIs
 echo ""
-echo -e "${BLUE}Step 2: Enable Cloud Build API${NC}"
-if gcloud services list --enabled --project="$GCP_PROJECT_ID" --filter="name:cloudbuild.googleapis.com" --format="value(name)" | grep -q "cloudbuild"; then
-    echo -e "${GREEN}✓ Cloud Build API already enabled${NC}"
+echo -e "${BLUE}Step 2: Enable required APIs${NC}"
+
+APIS=(
+    "cloudbuild.googleapis.com"
+    "artifactregistry.googleapis.com"
+)
+
+for api in "${APIS[@]}"; do
+    if gcloud services list --enabled --project="$GCP_PROJECT_ID" --filter="name:$api" --format="value(name)" | grep -q "${api}"; then
+        echo -e "${GREEN}✓ $api already enabled${NC}"
+    else
+        echo "Enabling $api..."
+        gcloud services enable "$api" --project="$GCP_PROJECT_ID"
+        echo -e "${GREEN}✓ $api enabled${NC}"
+    fi
+done
+
+# Wait for SAs to be created after enabling APIs
+echo "Waiting 10 seconds for service accounts to be created..."
+sleep 10
+
+# Step 3: Setup Artifact Registry Repository
+echo ""
+echo -e "${BLUE}Step 3: Setup Artifact Registry Repository${NC}"
+
+REPO_NAME="raglab"
+REPO_FORMAT="docker"
+
+# Check if repository exists
+if gcloud artifacts repositories describe "$REPO_NAME" \
+    --location="$GCP_REGION" \
+    --project="$GCP_PROJECT_ID" &>/dev/null; then
+    echo -e "${GREEN}✓ Artifact Registry repository '$REPO_NAME' already exists${NC}"
 else
-    echo "Enabling Cloud Build API..."
-    gcloud services enable cloudbuild.googleapis.com --project="$GCP_PROJECT_ID"
-    echo -e "${GREEN}✓ Cloud Build API enabled${NC}"
-    
-    # Wait for SA to be created
-    echo "Waiting 10 seconds for Cloud Build SA to be created..."
-    sleep 10
+    echo "Creating Artifact Registry repository: $REPO_NAME"
+    gcloud artifacts repositories create "$REPO_NAME" \
+        --repository-format="$REPO_FORMAT" \
+        --location="$GCP_REGION" \
+        --project="$GCP_PROJECT_ID" \
+        --description="Docker images for RAG Lab CI/CD pipeline"
+    echo -e "${GREEN}✓ Repository created: ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${REPO_NAME}${NC}"
 fi
 
-# Step 3: Create Cloud Build Trigger
+# Step 4: Create Cloud Build Trigger
 echo ""
-echo -e "${BLUE}Step 3: Create Cloud Build Trigger${NC}"
+echo -e "${BLUE}Step 4: Create Cloud Build Trigger${NC}"
 
 # Check if trigger already exists
 if gcloud builds triggers describe "$TRIGGER_NAME" --project="$GCP_PROJECT_ID" &>/dev/null; then
@@ -136,9 +166,9 @@ else
     echo -e "${GREEN}✓ Trigger already configured${NC}"
 fi
 
-# Step 4: Grant IAM permissions to Cloud Build SA
+# Step 5: Grant IAM permissions to Cloud Build SA
 echo ""
-echo -e "${BLUE}Step 4: Grant IAM permissions to Cloud Build SA${NC}"
+echo -e "${BLUE}Step 5: Grant IAM permissions to Cloud Build SA${NC}"
 echo "Service Account: $CLOUDBUILD_SA"
 echo ""
 
@@ -169,9 +199,9 @@ for role in "${ROLES[@]}"; do
     fi
 done
 
-# Step 5: Verify setup
+# Step 6: Verify setup
 echo ""
-echo -e "${BLUE}Step 5: Verify setup${NC}"
+echo -e "${BLUE}Step 6: Verify setup${NC}"
 
 # Check trigger
 if gcloud builds triggers describe "$TRIGGER_NAME" --project="$GCP_PROJECT_ID" &>/dev/null; then

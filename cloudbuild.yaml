@@ -12,22 +12,32 @@
 # - Service account: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
 
 steps:
-  # Step 1: Build Docker image
+  # Step 1: Pull previous image for layer caching (speeds up builds)
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker pull us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest || echo "No previous image to cache"
+    
+  # Step 2: Build Docker image with cache
+  # Multi-stage Dockerfile: base stage cached unless requirements change
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
+      - '--cache-from=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '-t'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '.'
-    timeout: 300s  # 5 minutes (base deps only, no torch/sentence-transformers)
+    timeout: 300s  # 5 minutes max, but typically 30-60s with cache
 
-  # Step 2: Push image to Artifact Registry
+  # Step 3: Push image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
 
-  # Step 3: Verify secret exists (fail fast if not uploaded)
+  # Step 4: Verify secret exists (fail fast if not uploaded)
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
@@ -42,7 +52,7 @@ steps:
         fi
         echo "✓ Secret 'raglab-config' exists"
 
-  # Step 4: Deploy to Cloud Run
+  # Step 5: Deploy to Cloud Run
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
       - 'run'

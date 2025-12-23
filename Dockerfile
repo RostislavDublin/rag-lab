@@ -1,34 +1,35 @@
-# Multi-stage build for optimized production image
-FROM python:3.11-slim as builder
+# Multi-stage build with optimized layer caching
+# Base stage is cached unless requirements-base.txt changes
+# Cloud Build will reuse cached layers automatically
+
+# Stage 1: Base image with dependencies
+FROM python:3.11-slim as base
 
 WORKDIR /app
 
-# Install build dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
+# Copy ONLY requirements first (for better layer caching)
 COPY requirements-base.txt .
 
-# Production: Install only base dependencies (Vertex AI providers)
-# This excludes sentence-transformers + torch (saves ~150MB and ~5 minutes build time)
-RUN pip install --no-cache-dir -r requirements-base.txt
+# Install Python dependencies
+# This layer is cached and reused until requirements-base.txt changes
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-base.txt
 
-# Optional: For on-premise embeddings/reranking, uncomment these lines:
-# COPY requirements-optional.txt .
-# RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-# RUN pip install --no-cache-dir -r requirements-optional.txt
-
-# Production stage
+# Stage 2: Production image with application code
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Copy installed packages from base stage
+COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=base /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY src/ ./src/
@@ -42,7 +43,7 @@ RUN mkdir -p data
 ENV PORT=8080
 
 # Create non-root user and set ownership
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser

@@ -382,9 +382,18 @@ fi
 print_info "Granting Cloud Build service account access to secret..."
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
 CLOUDBUILD_SA="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+DEPLOYER_SA="rag-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
 
+# Grant to default Cloud Build SA
 gcloud secrets add-iam-policy-binding "raglab-config" \
     --member="serviceAccount:$CLOUDBUILD_SA" \
+    --role="roles/secretmanager.secretAccessor" \
+    --project="$PROJECT_ID" \
+    --quiet > /dev/null 2>&1
+
+# Grant to rag-deployer SA (used by our Cloud Build trigger)
+gcloud secrets add-iam-policy-binding "raglab-config" \
+    --member="serviceAccount:$DEPLOYER_SA" \
     --role="roles/secretmanager.secretAccessor" \
     --project="$PROJECT_ID" \
     --quiet > /dev/null 2>&1

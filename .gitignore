@@ -84,3 +84,8 @@ temp/
 *.faiss
 *.index
 chroma/
+
+# Credentials (added by setup script)
+deployment/credentials.txt
+.env
+service-account-key.json
