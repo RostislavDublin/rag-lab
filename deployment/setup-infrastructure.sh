@@ -330,11 +330,77 @@ else
 fi
 
 # =============================================================================
-# Summary
+# Create Secret Manager Secret
 # =============================================================================
+
+print_info "Creating Secret Manager secret: raglab-config..."
 
 # Get Cloud SQL Connection Name
 CLOUD_SQL_CONNECTION_NAME=$(gcloud sql instances describe "$DB_INSTANCE_NAME" --project="$PROJECT_ID" --format='value(connectionName)')
+
+# Build .env content for Cloud Run
+SECRET_CONTENT="# GCP Configuration
+GCP_PROJECT_ID=\"$PROJECT_ID\"
+GCP_REGION=\"$REGION\"
+GCP_LOCATION=\"$REGION\"
+
+# Cloud Storage
+GCS_BUCKET=\"$BUCKET_NAME\"
+
+# Cloud SQL PostgreSQL (Unix socket for Cloud Run)
+DATABASE_URL=\"postgresql://$DB_USER:$DB_PASSWORD@/$DB_NAME?host=/cloudsql/$CLOUD_SQL_CONNECTION_NAME\"
+
+# Cloud SQL Connection Name
+CLOUD_SQL_CONNECTION_NAME=\"$CLOUD_SQL_CONNECTION_NAME\"
+
+# Service Account
+SERVICE_ACCOUNT_EMAIL=\"$SERVICE_ACCOUNT_EMAIL\"
+
+# Port
+PORT=\"8080\"
+"
+
+# Check if secret exists
+if gcloud secrets describe "raglab-config" --project="$PROJECT_ID" &>/dev/null; then
+    print_warn "Secret 'raglab-config' already exists, updating with new version..."
+    echo "$SECRET_CONTENT" | gcloud secrets versions add "raglab-config" \
+        --project="$PROJECT_ID" \
+        --data-file=- \
+        --quiet
+    print_info "Secret updated successfully"
+else
+    print_info "Creating new secret 'raglab-config'..."
+    echo "$SECRET_CONTENT" | gcloud secrets create "raglab-config" \
+        --project="$PROJECT_ID" \
+        --replication-policy="automatic" \
+        --data-file=- \
+        --quiet
+    print_info "Secret created successfully"
+fi
+
+# Grant Cloud Build SA access to secret (for verification step in cloudbuild.yaml)
+print_info "Granting Cloud Build service account access to secret..."
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
+CLOUDBUILD_SA="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+
+gcloud secrets add-iam-policy-binding "raglab-config" \
+    --member="serviceAccount:$CLOUDBUILD_SA" \
+    --role="roles/secretmanager.secretAccessor" \
+    --project="$PROJECT_ID" \
+    --quiet > /dev/null 2>&1
+
+# Grant runtime service account access to secret
+gcloud secrets add-iam-policy-binding "raglab-config" \
+    --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+    --role="roles/secretmanager.secretAccessor" \
+    --project="$PROJECT_ID" \
+    --quiet > /dev/null 2>&1
+
+print_info "Secret permissions configured"
+
+# =============================================================================
+# Summary
+# =============================================================================
 
 print_info "=========================================="
 print_info "Infrastructure Summary"
@@ -350,9 +416,13 @@ print_info "Cloud SQL:"
 echo "  Connection Name: $CLOUD_SQL_CONNECTION_NAME"
 echo "  Private IP: $DB_PRIVATE_IP"
 echo ""
+print_info "Secret Manager:"
+echo "  Secret: raglab-config"
+echo "  Latest version: $(gcloud secrets versions list raglab-config --limit=1 --format='value(name)' 2>/dev/null || echo 'N/A')"
+echo ""
 print_info "Service Account:"
 echo "  Email: $SERVICE_ACCOUNT_EMAIL"
 echo ""
 print_info "Next Steps:"
-echo "1. Update your .env file with Connection Name and Private IP above"
+echo "1. Verify secret content: gcloud secrets versions access latest --secret=raglab-config"
 echo "2. Deploy: cd deployment && ./deploy-cloudrun.sh"
