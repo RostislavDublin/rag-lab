@@ -1,12 +1,12 @@
 # Google Cloud Build configuration for RAG Lab
 # 
 # DEPLOYMENT WORKFLOW:
-# 1. DevOps manually uploads .env to Secret Manager: ./deployment/upload-secrets.sh
+# 1. Run setup-infrastructure.sh to create Secret Manager secret 'raglab-config'
 # 2. Push to deploy branch triggers this build: git push origin deploy/production
 # 3. Cloud Build automatically builds Docker image and deploys to Cloud Run
 #
 # Cloud Build Trigger Configuration:
-# - Repository: your-github-username/rag-lab
+# - Repository: RostislavDublin/rag-lab
 # - Branch: ^deploy/production$  (ONLY this branch triggers deploy)
 # - Included files: ** (all changes)
 # - Service account: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
@@ -35,7 +35,7 @@ steps:
       - |
         if ! gcloud secrets describe raglab-config --project=$PROJECT_ID &>/dev/null; then
           echo "ERROR: Secret 'raglab-config' not found!"
-          echo "Run: ./deployment/upload-secrets.sh to upload .env to Secret Manager"
+          echo "Run: ./deployment/setup-infrastructure.sh to create secret"
           exit 1
         fi
         echo "✓ Secret 'raglab-config' exists"
