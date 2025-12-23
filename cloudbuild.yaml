@@ -33,6 +33,8 @@ steps:
     args:
       - '-c'
       - |
+        echo "DEBUG: PROJECT_ID=$PROJECT_ID"
+        echo "Checking secret raglab-config..."
         if ! gcloud secrets describe raglab-config --project=$PROJECT_ID &>/dev/null; then
           echo "ERROR: Secret 'raglab-config' not found!"
           echo "Run: ./deployment/setup-infrastructure.sh to create secret"
