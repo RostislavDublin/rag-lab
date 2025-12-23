@@ -42,8 +42,8 @@ RUN mkdir -p data
 # Cloud Run expects port 8080
 ENV PORT=8080
 
-# Create non-root user and set ownership
-RUN chown -R appuser:appuser /app
+# Create non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
