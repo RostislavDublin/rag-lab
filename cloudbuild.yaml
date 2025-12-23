@@ -17,15 +17,15 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/raglab:latest'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '.'
     timeout: 300s  # 5 minutes (base deps only, no torch/sentence-transformers)
 
-  # Step 2: Push image to Container Registry
+  # Step 2: Push image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/raglab:latest'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
 
   # Step 3: Verify secret exists (fail fast if not uploaded)
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -46,7 +46,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'raglab'
-      - '--image=gcr.io/$PROJECT_ID/raglab:latest'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '--region=us-central1'
       - '--platform=managed'
       - '--allow-unauthenticated'
@@ -64,9 +64,9 @@ steps:
 # Build timeout (total for all steps)
 timeout: 1800s  # 30 minutes
 
-# Images to push to Container Registry
+# Images to push to Artifact Registry
 images:
-  - 'gcr.io/$PROJECT_ID/raglab:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
 
 # Build options
 options:

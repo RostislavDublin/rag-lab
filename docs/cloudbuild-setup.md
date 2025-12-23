@@ -19,7 +19,7 @@ This guide explains how to set up automated Cloud Build deployment from GitHub.
 │ Cloud Build Process                                             │
 ├─────────────────────────────────────────────────────────────────┤
 │ GitHub (deploy/production) → Cloud Build Trigger →              │
-│ Build Docker (20 min) → Push to GCR → Deploy to Cloud Run       │
+│ Build Docker (20 min) → Push to Artifact Registry → Deploy      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -101,7 +101,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:$CB_SA" \
   --role="roles/secretmanager.secretAccessor"
 
-# Grant Storage Admin (push images to GCR)
+# Grant Artifact Registry Writer (push images to Artifact Registry)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:$CB_SA" \
   --role="roles/storage.admin"
@@ -246,10 +246,10 @@ gcloud run services logs read raglab --region us-central1 --limit 50
 
 ```bash
 # List previous images
-gcloud container images list-tags gcr.io/YOUR_PROJECT_ID/raglab
+gcloud artifacts docker images list us-central1-docker.pkg.dev/YOUR_PROJECT_ID/raglab
 
 # Rollback to previous version
 gcloud run deploy raglab \
-  --image gcr.io/YOUR_PROJECT_ID/raglab:PREVIOUS_COMMIT_SHA \
+  --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/raglab/raglab:PREVIOUS_COMMIT_SHA \
   --region us-central1
 ```

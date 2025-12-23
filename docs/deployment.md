@@ -61,7 +61,7 @@ open "https://console.cloud.google.com/cloud-build/builds?project=YOUR_PROJECT"
 **What happens on push to deploy/production:**
 1. GitHub webhook triggers Cloud Build
 2. Build Docker image (~5 min first time, ~2 min cached)
-3. Push to Container Registry
+3. Push to Artifact Registry
 4. Deploy to Cloud Run with secrets mounted
 5. Service available at Cloud Run URL
 
@@ -186,10 +186,10 @@ gcloud secrets add-iam-policy-binding raglab-config \
   --role="roles/secretmanager.secretAccessor"
 
 # 7. Build and deploy
-gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/raglab:latest
+gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_PROJECT_ID/raglab/raglab:latest
 
 gcloud run deploy raglab \
-  --image gcr.io/YOUR_PROJECT_ID/raglab:latest \
+  --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/raglab/raglab:latest \
   --region us-central1 \
   --platform managed \
   --allow-unauthenticated \
@@ -321,7 +321,7 @@ CREATE TABLE document_chunks (
 
 **Migration steps:**
 1. Use existing Dockerfile (no changes)
-2. Push image to container registry
+2. Push image to Artifact Registry
 3. Deploy to GKE with k8s manifests
 4. Update DATABASE_URL to point to PostgreSQL
 

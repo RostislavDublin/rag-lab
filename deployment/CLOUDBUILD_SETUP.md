@@ -73,7 +73,7 @@ cd deployment
    - `roles/run.admin` - Deploy to Cloud Run
    - `roles/iam.serviceAccountUser` - Act as rag-service SA
    - `roles/secretmanager.secretAccessor` - Read secrets
-   - `roles/storage.admin` - Push images to GCR
+   - `roles/artifactregistry.writer` - Push images to Artifact Registry
 
 5. **Verify setup** and show next steps
 
@@ -92,7 +92,7 @@ cd deployment
 roles/run.admin                    # Deploy Cloud Run service
 roles/iam.serviceAccountUser       # Delegate to rag-service SA
 roles/secretmanager.secretAccessor # Verify secrets exist
-roles/storage.admin                # Push Docker images to GCR
+roles/artifactregistry.writer      # Push Docker images to Artifact Registry
 ```
 
 ### Cloud Build Trigger
@@ -104,8 +104,8 @@ roles/storage.admin                # Push Docker images to GCR
 **Action:** Execute `cloudbuild.yaml`
 
 **Steps:**
-1. Build Docker image → `gcr.io/PROJECT/raglab:latest`
-2. Push to Container Registry
+1. Build Docker image → `REGION-docker.pkg.dev/PROJECT/raglab/raglab:latest`
+2. Push to Artifact Registry
 3. Verify secret exists (fail fast)
 4. Deploy to Cloud Run with secret mounted
 
