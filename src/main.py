@@ -80,10 +80,8 @@ GCS_BUCKET = os.getenv("GCS_BUCKET", "raglab-documents")
 APP_VERSION = "0.2.0"
 APP_START_TIME = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-# Initialize storage with env bucket
-document_storage = DocumentStorage(bucket_name=GCS_BUCKET)
-
-# Global instances
+# Global instances (initialized in lifespan)
+document_storage = None
 genai_client = None
 document_processor = None
 file_validator = FileValidator()  # Initialize file validator
@@ -92,7 +90,12 @@ file_validator = FileValidator()  # Initialize file validator
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and cleanup resources"""
-    global genai_client, document_processor
+    global genai_client, document_processor, document_storage
+    
+    # Startup: Initialize GCS storage
+    logger.info("Initializing document storage...")
+    document_storage = DocumentStorage(bucket_name=GCS_BUCKET)
+    logger.info("Document storage initialized successfully")
     
     # Startup: Initialize Vertex AI with new Google Gen AI SDK
     logger.info(f"Initializing Google Gen AI (project={PROJECT_ID}, location={LOCATION})...")
@@ -118,6 +121,7 @@ async def lifespan(app: FastAPI):
     # Shutdown: Cleanup resources
     logger.info("Shutting down...")
     await vector_db.disconnect()
+    document_storage = None
     genai_client = None
     document_processor = None
 

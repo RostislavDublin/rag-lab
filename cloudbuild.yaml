@@ -12,28 +12,25 @@
 # - Service account: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
 
 steps:
-  # Step 1: Pull previous image for layer caching (speeds up builds)
-  # DISABLED TEMPORARILY FOR DEBUGGING
-  # - name: 'gcr.io/cloud-builders/docker'
-  #   entrypoint: 'bash'
-  #   args:
-  #     - '-c'
-  #     - |
-  #       docker pull us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest || echo "No previous image to cache"
+  # Step 1: Pull previous image for layer caching
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker pull us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest || echo "No previous image to cache"
     
   # Step 2: Build Docker image with cache
-  # Multi-stage Dockerfile: base stage cached unless requirements change
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
-      # - '--cache-from=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
+      - '--cache-from=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '--build-arg'
       - 'BUILDKIT_INLINE_CACHE=1'
-      - '--no-cache'  # Force fresh build for debugging
       - '-t'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '.'
-    timeout: 600s  # 10 minutes for fresh build
+    timeout: 300s
 
   # Step 3: Push image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
