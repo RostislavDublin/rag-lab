@@ -84,13 +84,18 @@ APP_START_TIME = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 document_storage = None
 genai_client = None
 document_processor = None
-file_validator = FileValidator()  # Initialize file validator
+file_validator = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and cleanup resources"""
-    global genai_client, document_processor, document_storage
+    global genai_client, document_processor, document_storage, file_validator
+    
+    # Startup: Initialize file validator
+    logger.info("Initializing file validator...")
+    file_validator = FileValidator()
+    logger.info("File validator initialized successfully")
     
     # Startup: Initialize GCS storage
     logger.info("Initializing document storage...")
@@ -124,6 +129,7 @@ async def lifespan(app: FastAPI):
     document_storage = None
     genai_client = None
     document_processor = None
+    file_validator = None
 
 
 # FastAPI app
