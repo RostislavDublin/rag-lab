@@ -60,5 +60,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Add /app to PYTHONPATH so Python can find src module
 ENV PYTHONPATH=/app
 
-# Start FastAPI with uvicorn - use direct path to avoid module import issues
-CMD exec uvicorn src.main:app --host 0.0.0.0 --port ${PORT} --workers 1
+# Start FastAPI with uvicorn using python -m to respect PYTHONPATH
+CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
