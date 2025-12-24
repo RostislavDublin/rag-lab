@@ -41,3 +41,4 @@ pymupdf_layout==1.26.6  # Improved PDF layout analysis
 pyyaml>=6.0  # YAML parsing and generation (for structured data conversion)
 xmltodict>=0.13.0  # Clean XML to dict conversion
 python-magic>=0.4.27  # Content-based file type detection (magic bytes)
+html2text>=2020.1.16  # HTML to Markdown conversion

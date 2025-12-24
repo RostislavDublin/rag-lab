@@ -27,6 +27,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install runtime dependencies (libmagic for python-magic)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy installed packages from base stage
 COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=base /usr/local/bin /usr/local/bin
@@ -55,5 +60,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Add /app to PYTHONPATH so Python can find src module
 ENV PYTHONPATH=/app
 
-# Start FastAPI with uvicorn
-CMD exec uvicorn src.main:app --host 0.0.0.0 --port ${PORT} --workers 1
+# Start FastAPI with uvicorn using Python module syntax
+CMD exec python -m uvicorn src.main:app --host 0.0.0.0 --port ${PORT} --workers 1
