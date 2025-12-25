@@ -50,6 +50,9 @@ RUN mkdir -p data
 # Cloud Run expects port 8080
 ENV PORT=8080
 
+# Add /app to PYTHONPATH so Python can find src module (MUST be before USER switch)
+ENV PYTHONPATH=/app
+
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 
@@ -62,9 +65,6 @@ WORKDIR /app
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8080/health')"
-
-# Add /app to PYTHONPATH so Python can find src module
-ENV PYTHONPATH=/app
 
 # Start FastAPI with uvicorn
 CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

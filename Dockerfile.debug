@@ -39,6 +39,8 @@ COPY src/ ./src/
 RUN mkdir -p data
 
 ENV PORT=8080
+
+# Add /app to PYTHONPATH (MUST be before USER switch)
 ENV PYTHONPATH=/app
 
 # Test that module can be imported at build time (should succeed if structure is correct)
