@@ -39,6 +39,9 @@ COPY --from=base /usr/local/bin /usr/local/bin
 # Copy application code
 COPY src/ ./src/
 
+# DEBUG: Print what was copied
+RUN ls -laR /app/src/ | head -50 && echo "---" && cat /app/src/__init__.py
+
 # Create data directory (no need to copy .gitkeep to production)
 RUN mkdir -p data
 
@@ -52,6 +55,9 @@ RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
+
+# Ensure working directory is /app for the user
+WORKDIR /app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

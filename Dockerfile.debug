@@ -1,0 +1,57 @@
+# Stage 1: Base image with dependencies (same as production)
+FROM python:3.11-slim as base
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-base.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-base.txt
+
+# Stage 2: Debug image
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install runtime dependencies + debugging tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmagic1 \
+    curl \
+    vim \
+    nano \
+    less \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from base stage
+COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=base /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY src/ ./src/
+
+# Create data directory
+RUN mkdir -p data
+
+ENV PORT=8080
+ENV PYTHONPATH=/app
+
+# Test that module can be imported at build time (should succeed if structure is correct)
+RUN python -c "import src; print('SUCCESS: src package imported during build!')"
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Ensure working directory is /app for the user
+WORKDIR /app
+
+# Start a simple HTTP server to keep Cloud Run happy + keep container alive
+CMD ["python", "-m", "http.server", "8080"]
