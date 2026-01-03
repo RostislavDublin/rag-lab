@@ -362,20 +362,19 @@ PORT=\"8080\"
 
 # Check if secret exists
 if gcloud secrets describe "raglab-config" --project="$PROJECT_ID" &>/dev/null; then
-    print_warn "Secret 'raglab-config' already exists, updating with new version..."
-    echo "$SECRET_CONTENT" | gcloud secrets versions add "raglab-config" \
-        --project="$PROJECT_ID" \
-        --data-file=- \
-        --quiet
-    print_info "Secret updated successfully"
+    print_warn "Secret 'raglab-config' already exists, SKIPPING update to avoid overwriting production config"
+    print_info "To update secrets, manually edit .env and run: deployment/upload-secrets.sh"
 else
-    print_info "Creating new secret 'raglab-config'..."
+    print_info "Creating minimal secret 'raglab-config' (you MUST update it with full .env later)..."
     echo "$SECRET_CONTENT" | gcloud secrets create "raglab-config" \
         --project="$PROJECT_ID" \
         --replication-policy="automatic" \
         --data-file=- \
         --quiet
-    print_info "Secret created successfully"
+    print_info "Minimal secret created. Next steps:"
+    print_info "  1. Copy .env.example to .env"
+    print_info "  2. Edit .env with all settings (JWT, reranking, LLM, etc.)"
+    print_info "  3. Run: deployment/upload-secrets.sh"
 fi
 
 # Grant Cloud Build SA access to secret (for verification step in cloudbuild.yaml)

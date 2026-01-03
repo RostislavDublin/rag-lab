@@ -1,9 +1,5 @@
-# Multi-stage build with optimized layer caching
-# Base stage is cached unless requirements-base.txt changes
-# Cloud Build will reuse cached layers automatically
-
-# Stage 1: Base image with dependencies
-FROM python:3.11-slim as base
+# Single-stage build
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -12,35 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy ONLY requirements first (for better layer caching)
-COPY requirements-base.txt .
-
-# Install Python dependencies
-# This layer is cached and reused until requirements-base.txt changes
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements-base.txt
-
-# Stage 2: Production image with application code
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install runtime dependencies (libmagic for python-magic)
-RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from base stage
-COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=base /usr/local/bin /usr/local/bin
+# Copy and install Python dependencies
+COPY requirements-base.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements-base.txt
 
 # Copy application code
 COPY src/ ./src/
-
-# DEBUG: Print what was copied
-RUN ls -laR /app/src/ | head -50 && echo "---" && cat /app/src/__init__.py
 
 # Create data directory (no need to copy .gitkeep to production)
 RUN mkdir -p data
@@ -52,6 +29,9 @@ ENV PORT=8080
 
 # Add /app to PYTHONPATH so Python can find src module (MUST be before USER switch)
 ENV PYTHONPATH=/app
+
+# ENV_FILE path for Cloud Run secret mounting (can be overridden at runtime)
+ENV ENV_FILE=/config/.env
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

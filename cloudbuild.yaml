@@ -12,33 +12,55 @@
 # - Service account: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
 
 steps:
-  # Step 1: Pull previous image for layer caching
+  # Step 0: Pull previous image for layer cache (ignore failure if image doesn't exist yet)
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
     args:
       - '-c'
-      - |
-        docker pull us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest || echo "No previous image to cache"
-    
-  # Step 2: Build Docker image with cache
+      - 'docker pull us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest || echo "No previous image found, building from scratch"'
+
+  # Step 1: Build Docker image with cache from previous build
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
       - '--cache-from=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
-      - '--build-arg'
-      - 'BUILDKIT_INLINE_CACHE=1'
+      - '-f'
+      - 'Dockerfile'
       - '-t'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '.'
-    timeout: 300s
+    timeout: 600s
 
-  # Step 3: Push image to Artifact Registry
+  # Step 2: Push image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
 
-  # Step 4: Verify secret exists (fail fast if not uploaded)
+  # Step 2.5: DEBUG - Inspect built image contents
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "====== INSPECTING IMAGE CONTENTS ======"
+        echo "=== Listing /app directory ==="
+        docker run --rm --entrypoint /bin/sh us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest -c "ls -la /app/"
+        echo ""
+        echo "=== Checking if src/ exists ==="
+        docker run --rm --entrypoint /bin/sh us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest -c "test -d /app/src && echo 'src/ EXISTS' || echo 'src/ MISSING'"
+        echo ""
+        echo "=== Listing src/ contents (first 20 lines) ==="
+        docker run --rm --entrypoint /bin/sh us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest -c "ls -la /app/src/ 2>&1 | head -20"
+        echo ""
+        echo "=== Checking PYTHONPATH ==="
+        docker run --rm --entrypoint /bin/sh us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest -c "echo PYTHONPATH=\$$PYTHONPATH"
+        echo ""
+        echo "=== Testing Python import ==="
+        docker run --rm --entrypoint /bin/sh us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest -c "python -c 'import sys; print(\"sys.path:\"); print(\"\\n\".join(sys.path)); print(\"\"); import src.main; print(\"✓ src.main imported successfully\")'" || echo "❌ IMPORT FAILED"
+        echo "====== END DEBUG ======"
+
+  # Step 3: Verify secret exists (fail fast if not uploaded)
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
@@ -53,7 +75,7 @@ steps:
         fi
         echo "✓ Secret 'raglab-config' exists"
 
-  # Step 5: Deploy to Cloud Run
+  # Step 4: Deploy to Cloud Run with verbose logging
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
       - 'run'
@@ -71,7 +93,9 @@ steps:
       - '--min-instances=0'
       - '--service-account=rag-service@$PROJECT_ID.iam.gserviceaccount.com'
       - '--add-cloudsql-instances=$PROJECT_ID:us-central1:rag-postgres'
-      - '--update-secrets=/app/.env=raglab-config:latest'
+      - '--set-secrets=/config/.env=raglab-config:latest'
+      - '--verbosity=debug'  # Enable debug logging
+      - '--log-http'         # Log HTTP requests
 
 # Build timeout (total for all steps)
 timeout: 1800s  # 30 minutes

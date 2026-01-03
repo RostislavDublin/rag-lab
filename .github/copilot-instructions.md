@@ -209,6 +209,28 @@ Follow the same git workflow as other projects:
 - User must say "commit", "push", "c&p", or equivalent
 - Show git status and wait for confirmation
 
+## GCloud Configuration
+
+**ALWAYS use `raglab` configuration for ALL gcloud commands in this project:**
+
+```bash
+# Correct way to run gcloud commands
+gcloud builds submit --config=cloudbuild.yaml --configuration=raglab
+gcloud run deploy --configuration=raglab
+gcloud logging read --configuration=raglab
+
+# Or activate configuration permanently in session
+gcloud config configurations activate raglab
+```
+
+**Configuration details:**
+- Name: `raglab`
+- Account: `rostislav.dublin@tgs.com`
+- Project: `myai-475419`
+- Region: `us-central1`
+
+**Why:** User works with multiple GCP accounts. The `raglab` configuration ensures all commands use correct credentials without interfering with other projects.
+
 ## BigQuery Billing Analytics
 
 **Dataset configured:** `myai-475419.billing_export` (US multi-region)

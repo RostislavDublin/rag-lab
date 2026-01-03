@@ -26,18 +26,27 @@ from pathlib import Path
 # Load environment variables from .env.local (local dev) or .env (production)
 from dotenv import load_dotenv
 
-# Load .env.local first (highest priority), then .env as fallback
-env_local = Path(__file__).parent.parent / ".env.local"
-env_file = Path(__file__).parent.parent / ".env"
-
-if env_local.exists():
-    print(f"Loading environment from: {env_local}")
-    load_dotenv(env_local, override=True)
-elif env_file.exists():
-    print(f"Loading environment from: {env_file}")
-    load_dotenv(env_file, override=True)
+# Support ENV_FILE environment variable (for Cloud Run secret mounting)
+if env_file_path := os.getenv("ENV_FILE"):
+    env_custom = Path(env_file_path)
+    if env_custom.exists():
+        print(f"Loading environment from ENV_FILE: {env_custom}")
+        load_dotenv(env_custom, override=True)
+    else:
+        print(f"WARNING: ENV_FILE specified but not found: {env_custom}")
 else:
-    print("WARNING: No .env.local or .env file found - using system environment variables only")
+    # Load .env.local first (highest priority), then .env as fallback
+    env_local = Path(__file__).parent.parent / ".env.local"
+    env_file = Path(__file__).parent.parent / ".env"
+    
+    if env_local.exists():
+        print(f"Loading environment from: {env_local}")
+        load_dotenv(env_local, override=True)
+    elif env_file.exists():
+        print(f"Loading environment from: {env_file}")
+        load_dotenv(env_file, override=True)
+    else:
+        print("WARNING: No .env.local or .env file found - using system environment variables only")
 
 # Configure logging: console (brief) + file (detailed)
 from src.logging_config import setup_logging
@@ -89,43 +98,72 @@ file_validator = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize and cleanup resources"""
+    """Initialize and cleanup resources (with graceful degradation)"""
     global genai_client, document_processor, document_storage, file_validator
     
     # Startup: Initialize file validator
     logger.info("Initializing file validator...")
-    file_validator = FileValidator()
-    logger.info("File validator initialized successfully")
+    try:
+        file_validator = FileValidator()
+        logger.info("File validator initialized successfully")
+    except Exception as e:
+        logger.warning(f"File validator initialization failed: {e}")
+        file_validator = None
     
     # Startup: Initialize GCS storage
     logger.info("Initializing document storage...")
-    document_storage = DocumentStorage(bucket_name=GCS_BUCKET)
-    logger.info("Document storage initialized successfully")
+    try:
+        document_storage = DocumentStorage(bucket_name=GCS_BUCKET)
+        logger.info("Document storage initialized successfully")
+    except Exception as e:
+        logger.warning(f"Document storage initialization failed: {e}")
+        document_storage = None
     
     # Startup: Initialize Vertex AI with new Google Gen AI SDK
     logger.info(f"Initializing Google Gen AI (project={PROJECT_ID}, location={LOCATION})...")
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-    genai_client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
-    logger.info("Google Gen AI client initialized successfully")
+    try:
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        genai_client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+        logger.info("Google Gen AI client initialized successfully")
+    except Exception as e:
+        logger.warning(f"Google Gen AI initialization failed: {e}")
+        genai_client = None
     
     # Initialize database
     logger.info("Connecting to database...")
-    await vector_db.connect()
-    await vector_db.init_schema()
-    logger.info("Database initialized successfully")
+    try:
+        await vector_db.connect()
+        await vector_db.init_schema()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.warning(f"Database initialization failed: {e}")
+        logger.info("Application will start in degraded mode (database unavailable)")
     
     # Initialize document processor with genai client
-    document_processor = DocumentProcessor(
-        embedding_provider=EmbeddingProvider.VERTEX_AI,
-        genai_client=genai_client
-    )
-    logger.info("Document processor initialized")
+    try:
+        if genai_client:
+            document_processor = DocumentProcessor(
+                embedding_provider=EmbeddingProvider.VERTEX_AI,
+                genai_client=genai_client
+            )
+            logger.info("Document processor initialized")
+        else:
+            logger.warning("Document processor not initialized (genai_client unavailable)")
+            document_processor = None
+    except Exception as e:
+        logger.warning(f"Document processor initialization failed: {e}")
+        document_processor = None
+    
+    logger.info("Application startup complete (some services may be unavailable)")
     
     yield
     
     # Shutdown: Cleanup resources
     logger.info("Shutting down...")
-    await vector_db.disconnect()
+    try:
+        await vector_db.disconnect()
+    except Exception as e:
+        logger.warning(f"Database disconnect failed: {e}")
     document_storage = None
     genai_client = None
     document_processor = None
