@@ -97,25 +97,41 @@ async def extract_summary_and_keywords(
         logger.info(f"Truncated text from {len(text)} to {MAX_TEXT_LENGTH} chars for summarization")
     
     # Prompt for LLM extraction
-    prompt = f"""Analyze this document and provide:
+    prompt = f"""Analyze this document and extract:
 
-1. **Summary**: 2-3 concise sentences capturing the main topics and purpose
-2. **Keywords**: 10-15 key technical terms, concepts, or topics (single words or short phrases)
+1. **Summary**: 2-3 concise sentences describing the PRIMARY CONTENT
+2. **Keywords**: 10-15 key terms that best represent what this document IS ABOUT
+
+CRITICAL: Keywords must match the document's ACTUAL GENRE AND PURPOSE:
+
+- Fiction/Story → extract: characters, setting, plot themes, story elements
+- Technical documentation → extract: technologies, concepts explained, methodologies
+- News article → extract: events, people, places, topics discussed
+- Tutorial → extract: skills taught, tools covered, learning objectives
+- Academic paper → extract: research topics, methods, findings
+
+WRONG approach: Extracting ALL mentioned terms regardless of document purpose
+RIGHT approach: Extracting terms that describe WHAT THE DOCUMENT IS
+
+Examples:
+- Fairy tale mentioning "algorithms" in dialogue → keywords: ["fairy tale", "adventure", "characters", "forest"] NOT ["algorithms"]
+- Python tutorial → keywords: ["python", "programming", "tutorial", "basics"]
+- News about tech IPO → keywords: ["ipo", "technology", "stock market", "company"]
 
 Document text:
 {truncated_text}
 
 Output format (valid JSON):
 {{
-  "summary": "your 2-3 sentence summary here",
-  "keywords": ["keyword1", "keyword2", "keyword3", ...]
+  "summary": "This document is a [genre] about [primary subject]...",
+  "keywords": ["keyword1", "keyword2", ...]
 }}
 
 Requirements:
-- Summary must be 2-3 sentences maximum
-- Keywords should be lowercase, single words or short phrases (e.g., "kubernetes", "machine learning")
-- Keywords should be the most important technical terms, concepts, or topics
-- Return valid JSON only, no additional text"""
+- Keywords must reflect PRIMARY PURPOSE, not incidental mentions
+- Match keywords to document genre (story keywords for stories, tech keywords for tech docs)
+- Lowercase, single words or short phrases
+- Return valid JSON only"""
     
     # Retry loop with exponential backoff (similar to ADK retry_options)
     last_error = None

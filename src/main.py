@@ -346,6 +346,8 @@ class DocumentUploadResponse(BaseModel):
     chunks_created: int
     splits_performed: int = Field(default=0, description="Number of chunk splits due to token limit")
     max_split_depth: int = Field(default=0, description="Maximum recursion depth during splitting")
+    summary: Optional[str] = Field(default=None, description="LLM-generated summary (2-3 sentences)")
+    keywords: Optional[List[str]] = Field(default=None, description="LLM-extracted keywords (10-15 terms)")
     message: str
 
 
@@ -657,6 +659,8 @@ async def upload_document(
             chunks_created=len(gcs_chunks),
             splits_performed=embedding_stats.get("splits_performed", 0),
             max_split_depth=embedding_stats.get("max_depth_reached", 0),
+            summary=summary if summary else None,
+            keywords=keywords if keywords else None,
             message=f"Document processed successfully: {len(gcs_chunks)} chunks created"
         )
     
