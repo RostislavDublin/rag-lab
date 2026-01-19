@@ -22,23 +22,50 @@ GET /health
 }
 ```
 
+## Authentication
+
+**All API endpoints require authentication** (except `/health`).
+
+**Required Header:**
+```bash
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**Get Token (local testing):**
+```bash
+python scripts/get_user_token.py
+```
+
+**Configuration:**
+- ALLOWED_USERS: Comma-separated whitelist of user emails
+- TRUSTED_SERVICE_ACCOUNTS: Service accounts that can use X-End-User-ID delegation
+
+See [Authentication Guide](authentication.md) for detailed setup.
+
+---
+
 ## Upload Documents
 
 Upload one or more documents for processing.
 
 ```bash
-POST /upload
+POST /v1/documents/upload
 Content-Type: multipart/form-data
+Authorization: Bearer <JWT_TOKEN>
 
-files: file1.pdf, file2.txt (multiple files allowed)
-metadata: {"category": "technical", "author": "AI Team"}  # Optional JSON
+file: document.pdf (single file)
+metadata: {"category": "technical", "tags": ["python", "api"]}  # Optional JSON
 ```
 
 **Example:**
 ```bash
-curl -X POST http://localhost:8080/upload \
-  -F "files=@document1.pdf" \
-  -F "files=@document2.txt" \
+# Get token
+TOKEN=$(python scripts/get_user_token.py)
+
+# Upload document
+curl -X POST http://localhost:8080/v1/documents/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@document.pdf" \
   -F 'metadata={"category":"technical","priority":"high"}'
 ```
 
@@ -59,22 +86,22 @@ curl -X POST http://localhost:8080/upload \
 }
 ```
 
-## Hybrid Search
+## Query / Hybrid Search
 
 Perform hybrid search combining semantic similarity and metadata filtering.
 
 ```bash
-POST /search
+POST /v1/query
 Content-Type: application/json
+Authorization: Bearer <JWT_TOKEN>
 
 {
   "query": "How does authentication work?",
   "top_k": 5,
-  "metadata_filter": {
+  "filters": {
     "category": {"$eq": "technical"}
   },
-  "rerank": true,
-  "rerank_top_k": 3
+  "rerank": true
 }
 ```
 
@@ -83,10 +110,12 @@ Content-Type: application/json
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `query` | string | Yes | - | Search query text |
-| `top_k` | integer | No | 10 | Number of results to return (before reranking) |
-| `metadata_filter` | object | No | null | MongoDB-style filter for metadata |
+| `top_k` | integer | No | 5 | Number of results to return |
+| `filters` | object | No | null | MongoDB-style filter for metadata |
 | `rerank` | boolean | No | false | Enable LLM reranking with Gemini |
-| `rerank_top_k` | integer | No | 5 | Number of results after reranking |
+| `rerank_candidates` | integer | No | 50 | Number of candidates for reranking |
+| `use_hybrid` | boolean | No | true | Enable hybrid search (vector + BM25) |
+| `min_similarity` | float | No | 0.0 | Minimum similarity threshold (0.0-1.0) |
 
 **Response:**
 ```json

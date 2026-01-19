@@ -26,11 +26,30 @@ tests/
 
 ## Running Tests
 
-### All Tests (162 total)
+### Prerequisites
+
+**Local tests against Cloud Run need:**
+1. Valid JWT token
+2. User email in ALLOWED_USERS
 
 ```bash
+# Get token (saves to .user_token automatically)
+python scripts/get_user_token.py
+
+# Run tests (token loaded from .user_token)
+export API_BASE=https://raglab-cf7prwxena-uc.a.run.app
+pytest tests/e2e/ tests/integration/ -v
+```
+
+### All Tests
+
+```bash
+# Local server
 pytest -v
-# 37 e2e + 13 integration + 112 unit
+
+# Cloud Run (production)
+export API_BASE=https://raglab-cf7prwxena-uc.a.run.app
+pytest tests/e2e/ tests/integration/ -v
 ```
 
 ### By Category

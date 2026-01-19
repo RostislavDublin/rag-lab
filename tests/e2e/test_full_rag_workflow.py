@@ -51,7 +51,7 @@ from src.utils import calculate_file_hash
 
 
 # Test configuration
-API_BASE = "http://localhost:8080"
+API_BASE = os.getenv("API_BASE", "http://localhost:8080")
 GCS_BUCKET = "myai-475419-rag-documents"
 
 
@@ -125,7 +125,7 @@ def test_00_cleanup_before(test_documents, auth_headers):
 
 
 @pytest.mark.e2e
-def test_01_verify_api_health():
+def test_01_verify_api_health(auth_headers):
     """Step 1: Verify API is running and healthy"""
     print("\n=== Step 1: Verify API health ===")
     
@@ -136,7 +136,7 @@ def test_01_verify_api_health():
     print(f"✓ API version: {health['version']}, uptime: {health['uptime_seconds']}s")
     
     # Check API can list documents (may have user documents - that's OK!)
-    response = requests.get(f"{API_BASE}/v1/documents", timeout=10)
+    response = requests.get(f"{API_BASE}/v1/documents", headers=auth_headers, timeout=10)
     assert response.status_code == 200
     docs = response.json()
     print(f"✓ API responsive, current documents: {docs['total']}")
@@ -402,7 +402,7 @@ def test_03c2_security_protected_metadata_fields(test_documents, auth_headers):
     
     # Check system fields at top level
     assert doc["uploaded_by"] == "javaisforever@gmail.com", "uploaded_by should be from JWT"
-    assert doc["uploaded_at"].startswith("2025"), "uploaded_at should be current timestamp"
+    assert doc["uploaded_at"].startswith("2026"), "uploaded_at should be current timestamp"
     assert doc["uploaded_via"] == "api", "uploaded_via should be 'api'"
     
     # Check metadata does NOT contain protected fields
@@ -598,11 +598,11 @@ def test_03h_upload_log_document(test_documents, auth_headers):
 
 @pytest.mark.list
 @pytest.mark.e2e
-def test_04_list_documents():
+def test_04_list_documents(auth_headers):
     """Step 4: Verify documents are listed"""
     print("\n=== Step 4: List all documents ===")
     
-    response = requests.get(f"{API_BASE}/v1/documents", timeout=10)
+    response = requests.get(f"{API_BASE}/v1/documents", headers=auth_headers, timeout=10)
     assert response.status_code == 200
     
     docs = response.json()
@@ -1226,8 +1226,8 @@ def test_05i_reranking_improves_relevance(auth_headers):
     # - red_riding_hood_story.txt: fairy tale that mentions "hybrid search", "RAG", "algorithms" (keyword trap!)
     # - hybrid_search_technical.txt: actual technical explanation of hybrid search algorithms
     
-    # Query asking for technical explanation
-    query = "How do hybrid search algorithms work in RAG systems? Explain the technical implementation."
+    # Query asking for specific technical details that only a real technical doc would have
+    query = "Explain the architecture of hybrid search in RAG systems: what are the dual retrieval pathways, how are scores normalized and fused, and what are the specific implementation steps?"
     
     # Query WITHOUT reranking (vector search may prefer keyword-dense story)
     response_baseline = requests.post(
@@ -1397,12 +1397,12 @@ def test_05k_hybrid_search_keyword_boost(auth_headers):
 
 @pytest.mark.download
 @pytest.mark.e2e
-def test_06_download_document():
+def test_06_download_document(auth_headers):
     """Step 6: Download original document"""
     print("\n=== Step 6: Download original document ===")
     
     # Get first document
-    response = requests.get(f"{API_BASE}/v1/documents", timeout=10)
+    response = requests.get(f"{API_BASE}/v1/documents", headers=auth_headers, timeout=10)
     docs = response.json()["documents"]
     
     if not docs:
@@ -1411,7 +1411,7 @@ def test_06_download_document():
     doc_id = docs[0]["doc_id"]
     filename = docs[0]["filename"]
     
-    response = requests.get(f"{API_BASE}/v1/documents/{doc_id}/download", timeout=30)
+    response = requests.get(f"{API_BASE}/v1/documents/{doc_id}/download", headers=auth_headers, timeout=30)
     assert response.status_code == 200, f"Download failed: {response.text}"
     
     content = response.content

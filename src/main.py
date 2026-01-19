@@ -670,9 +670,14 @@ async def upload_document(
 
 
 @app.post("/v1/embed", response_model=EmbeddingResponse)
-async def create_embedding(request: EmbeddingRequest):
+async def create_embedding(
+    request: EmbeddingRequest,
+    user_email: str = Depends(get_current_user)
+):
     """
     Generate text embeddings using Vertex AI
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Example:
         POST /v1/embed
@@ -1081,9 +1086,15 @@ async def query_rag(
 
 
 @app.get("/v1/documents/{doc_id}/download")
-async def download_document(doc_id: int, format: str = "original"):
+async def download_document(
+    doc_id: int,
+    format: str = "original",
+    user_email: str = Depends(get_current_user)
+):
     """
     Download document in specified format
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Args:
         doc_id: Document ID
@@ -1162,9 +1173,14 @@ async def download_document(doc_id: int, format: str = "original"):
 
 
 @app.get("/v1/documents/{doc_id}/chunks", response_model=DocumentChunksResponse)
-async def get_document_chunks(doc_id: int):
+async def get_document_chunks(
+    doc_id: int,
+    user_email: str = Depends(get_current_user)
+):
     """
     Get all chunks for a document in order
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Returns all chunks with their text and metadata in sequential order (0, 1, 2, ...).
     Useful for:
@@ -1220,9 +1236,14 @@ async def get_document_chunks(doc_id: int):
 
 
 @app.get("/v1/documents/by-hash/{file_hash}", response_model=DocumentInfo)
-async def get_document_by_hash(file_hash: str):
+async def get_document_by_hash(
+    file_hash: str,
+    user_email: str = Depends(get_current_user)
+):
     """
     Get document info by SHA256 file hash
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Returns document metadata without downloading file content.
     Useful for checking if document exists before upload.
@@ -1276,9 +1297,11 @@ async def get_document_by_hash(file_hash: str):
 
 
 @app.get("/v1/documents", response_model=DocumentListResponse)
-async def list_documents():
+async def list_documents(user_email: str = Depends(get_current_user)):
     """
     List all documents in the system
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Returns metadata for all uploaded documents.
     
@@ -1329,9 +1352,14 @@ async def list_documents():
 
 
 @app.get("/v1/documents/{doc_id}", response_model=DocumentInfo)
-async def get_document(doc_id: int):
+async def get_document(
+    doc_id: int,
+    user_email: str = Depends(get_current_user)
+):
     """
     Get document metadata by ID
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Returns detailed information about a specific document.
     
@@ -1385,9 +1413,14 @@ async def get_document(doc_id: int):
 
 
 @app.delete("/v1/documents/{doc_id}", response_model=DocumentDeleteResponse)
-async def delete_document(doc_id: int):
+async def delete_document(
+    doc_id: int,
+    user_email: str = Depends(get_current_user)
+):
     """
     Delete document and all its chunks
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Removes from both PostgreSQL and GCS storage.
     
@@ -1435,9 +1468,14 @@ async def delete_document(doc_id: int):
 
 
 @app.delete("/v1/documents/by-hash/{file_hash}", response_model=DocumentDeleteResponse)
-async def delete_document_by_hash(file_hash: str):
+async def delete_document_by_hash(
+    file_hash: str,
+    user_email: str = Depends(get_current_user)
+):
     """
     Delete document by SHA256 file hash
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Useful for automated cleanup when you know file content but not database ID.
     
@@ -1507,9 +1545,12 @@ async def get_chunk_context(
     chunk_index: int,
     before: int = 1,
     after: int = 1,
+    user_email: str = Depends(get_current_user)
 ):
     """
-    Get chunk with surrounding context, reconstructed from original text.
+    Get chunk with surrounding context, reconstructed from original text
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
     
     Returns continuous text from chunk N-before to chunk N+after,
     WITHOUT overlaps (uses start_char/end_char from original document).

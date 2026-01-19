@@ -115,18 +115,32 @@ print_info "Configuration uploaded to Secret Manager"
 print_info "Setting project..."
 gcloud config set project "$GCP_PROJECT_ID"
 
-print_info "Building container with Cloud Build..."
-print_warn "This may take 3-5 minutes..."
+# Check if --skip-build flag is passed
+SKIP_BUILD=false
+for arg in "$@"; do
+    if [ "$arg" = "--skip-build" ]; then
+        SKIP_BUILD=true
+        break
+    fi
+done
 
-# Go to project root
-cd ..
+if [ "$SKIP_BUILD" = true ]; then
+    print_warn "Skipping build (--skip-build flag detected)"
+    print_info "Using existing image: gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}:latest"
+else
+    print_info "Building container with Cloud Build..."
+    print_warn "This may take 3-5 minutes..."
 
-# Build container image
-gcloud builds submit \
-    --tag "gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}:latest" \
-    --timeout=1200s  # 20 minutes for large image with torch/CUDA
+    # Go to project root
+    cd ..
 
-print_info "Container built successfully"
+    # Build container image
+    gcloud builds submit \
+        --tag "gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}:latest" \
+        --timeout=1200s  # 20 minutes for large image with torch/CUDA
+
+    print_info "Container built successfully"
+fi
 
 # =============================================================================
 # Deploy to Cloud Run
@@ -149,8 +163,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --min-instances "$MIN_INSTANCES" \
     --service-account "${SERVICE_ACCOUNT_EMAIL}" \
     --add-cloudsql-instances "${CLOUD_SQL_CONNECTION_NAME}" \
-    --add-volume name=config,type=secret,secret-name="$SECRET_NAME" \
-    --add-volume-mount volume=config,mount-path=/app/.env \
+    --set-secrets=/config/.env="${SECRET_NAME}":latest \
     --quiet
 
 print_info "Deployment completed successfully!"

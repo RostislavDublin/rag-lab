@@ -21,6 +21,7 @@ To skip: pytest -m 'not integration'
 """
 
 from pathlib import Path
+import os
 import pytest
 import requests
 
@@ -28,7 +29,7 @@ import requests
 pytestmark = pytest.mark.integration
 
 # Test configuration
-API_BASE = "http://localhost:8080"
+API_BASE = os.getenv("API_BASE", "http://localhost:8080")
 
 
 @pytest.fixture
