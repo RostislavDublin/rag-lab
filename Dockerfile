@@ -1,45 +1,57 @@
-# Single-stage build
-FROM python:3.11-slim
+# =============================================================================
+# Multi-stage build with dependency caching
+# =============================================================================
+# Stage 1: Dependencies layer (cached unless requirements change)
+FROM python:3.11-slim AS dependencies
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies for building Python packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
-    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
+# Copy requirements and install Python dependencies
+# This layer will be cached unless requirements-base.txt changes
 COPY requirements-base.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements-base.txt
 
-# Copy application code
+# =============================================================================
+# Stage 2: Runtime image (minimal, uses cached dependencies)
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+# Install only runtime system dependencies (no build tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python packages from dependencies stage
+COPY --from=dependencies /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=dependencies /usr/local/bin /usr/local/bin
+
+# Copy application code (changes frequently, happens after deps)
 COPY src/ ./src/
 
-# Create data directory (no need to copy .gitkeep to production)
+# Create data directory
 RUN mkdir -p data
 
-# .env will be mounted from Secret Manager at runtime (not included in image)
+# Environment variables
+ENV PORT=8080 \
+    PYTHONPATH=/app \
+    ENV_FILE=/config/.env
 
-# Cloud Run expects port 8080
-ENV PORT=8080
-
-# Add /app to PYTHONPATH so Python can find src module (MUST be before USER switch)
-ENV PYTHONPATH=/app
-
-# ENV_FILE path for Cloud Run secret mounting (can be overridden at runtime)
-ENV ENV_FILE=/config/.env
-
-# Create non-root user
+# Create non-root user and set permissions
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
 
-# Ensure working directory is /app for the user
 WORKDIR /app
 
 # Health check

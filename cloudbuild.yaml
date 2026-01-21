@@ -19,7 +19,9 @@ steps:
       - '-c'
       - 'docker pull us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest || echo "No previous image found, building from scratch"'
 
-  # Step 1: Build Docker image with cache from previous build
+  # Step 1: Build Docker image with multi-stage cache
+  # Multi-stage build: dependencies layer cached unless requirements-base.txt changes
+  # Expected: 11-15s for code changes, full build only when dependencies change
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
