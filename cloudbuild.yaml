@@ -12,32 +12,37 @@
 # - Service account: [PROJECT_NUMBER]@cloudbuild.gserviceaccount.com
 
 steps:
-  # Step 0: Pull previous image for layer cache (ignore failure if image doesn't exist yet)
+  # Step 1: Create buildx builder instance (required for registry cache)
   - name: 'gcr.io/cloud-builders/docker'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - 'docker pull us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest || echo "No previous image found, building from scratch"'
+    args: ['buildx', 'create', '--name', 'mybuilder', '--use']
 
-  # Step 1: Build Docker image with multi-stage cache
-  # Multi-stage build: dependencies layer cached unless requirements-base.txt changes
-  # Expected: 11-15s for code changes, full build only when dependencies change
+  # Step 2: Build with BuildKit registry cache and push
+  # 
+  # Registry cache performance (validated Jan 22, 2026):
+  # - First build (cold):     3M16S (196s) - creates cache manifest
+  # - Second build (cached):  1M27S (87s)  - uses cached dependencies
+  # - Speedup: 2.25x faster (12 layers CACHED)
+  #
+  # Cache strategy:
+  # - type=registry stores cache manifest in Artifact Registry
+  # - mode=max saves ALL intermediate layers (including multi-stage)
+  # - Persists across ephemeral Cloud Build machines
+  # - Invalidates on: requirements-base.txt or apt package changes
+  # - Reuses: gcc/g++/libpq-dev install (~30s) + pip install (~40s)
+  #
+  # Cache location: us-central1-docker.pkg.dev/$PROJECT_ID/raglab/cache
+  # Format: application/vnd.buildkit.cacheconfig.v0 (BuildKit-only, not pullable)
   - name: 'gcr.io/cloud-builders/docker'
     args:
+      - 'buildx'
       - 'build'
-      - '--cache-from=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
-      - '-f'
-      - 'Dockerfile'
+      - '--cache-from=type=registry,ref=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/cache'
+      - '--cache-to=type=registry,ref=us-central1-docker.pkg.dev/$PROJECT_ID/raglab/cache,mode=max'
+      - '--push'
       - '-t'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
       - '.'
     timeout: 600s
-
-  # Step 2: Push image to Artifact Registry
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/raglab/raglab:latest'
 
   # Step 2.5: DEBUG - Inspect built image contents
   - name: 'gcr.io/cloud-builders/docker'

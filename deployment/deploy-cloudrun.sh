@@ -5,7 +5,21 @@ set -e
 # RAG Lab - Cloud Run Deployment Script
 # =============================================================================
 # This script deploys the RAG Lab application to Google Cloud Run
-# Prerequisites: Run setup-infrastructure.sh first
+# 
+# Prerequisites:
+# 1. Run setup-infrastructure.sh first
+# 2. Create .env.deploy file with deployment configuration
+# 3. Create deployer-account-key.json (rag-deployer Service Account key)
+# 4. Edit .env file with application configuration
+#
+# Service Account isolation:
+# - Uses rag-deployer@PROJECT_ID Service Account
+# - Isolated from personal account (unaffected by gcloud auth login)
+# - Permissions: Cloud Run Admin, Storage Admin, Secret Manager Admin, Cloud Build Editor
+#
+# Build performance (with registry cache):
+# - First build:      ~3 minutes (creates cache)
+# - Subsequent builds: ~1.5 minutes (uses cached dependencies)
 # =============================================================================
 
 # Colors for output
@@ -19,25 +33,45 @@ print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # =============================================================================
+# Service Account Authentication
+# =============================================================================
+
+# Get absolute path to project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SERVICE_ACCOUNT_KEY="$PROJECT_ROOT/deployer-account-key.json"
+
+if [ ! -f "$SERVICE_ACCOUNT_KEY" ]; then
+    print_error "Service account key not found: $SERVICE_ACCOUNT_KEY"
+    exit 1
+fi
+
+print_info "Activating deployment service account (rag-deployer)..."
+export GOOGLE_APPLICATION_CREDENTIALS="$SERVICE_ACCOUNT_KEY"
+gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" --configuration=raglab
+
+# =============================================================================
 # Load Configuration
 # =============================================================================
 
 print_info "Loading deployment configuration from .env.deploy..."
 
-if [ ! -f ".env.deploy" ]; then
-    print_error ".env.deploy file not found!"
+ENV_DEPLOY="$SCRIPT_DIR/.env.deploy"
+if [ ! -f "$ENV_DEPLOY" ]; then
+    print_error ".env.deploy file not found at $ENV_DEPLOY"
     exit 1
 fi
 
 # Load deployment config (GCP project, region, resource names, Cloud Run settings)
 set -a
-source .env.deploy
+source "$ENV_DEPLOY"
 set +a
 
 print_info "Checking application configuration file..."
 
-if [ ! -f "../.env" ]; then
-    print_error ".env file not found. Create it manually with all app config and secrets!"
+APP_ENV="$PROJECT_ROOT/.env"
+if [ ! -f "$APP_ENV" ]; then
+    print_error ".env file not found at $APP_ENV. Create it manually with all app config and secrets!"
     exit 1
 fi
 
@@ -76,7 +110,7 @@ SECRET_NAME="${SECRET_NAME:-raglab-config}"
 print_info "Checking Secret Manager API..."
 
 # Check if Secret Manager API is enabled
-if ! gcloud services list --enabled --project="$GCP_PROJECT_ID" --filter="name:secretmanager.googleapis.com" --format="value(name)" | grep -q "secretmanager.googleapis.com"; then
+if ! gcloud services list --enabled --project="$GCP_PROJECT_ID" --filter="name:secretmanager.googleapis.com" --format="value(name)" --configuration=raglab | grep -q "secretmanager.googleapis.com"; then
     print_error "Secret Manager API is not enabled!"
     print_error "Run: gcloud services enable secretmanager.googleapis.com --project=$GCP_PROJECT_ID"
     print_error "Or add it to setup-infrastructure.sh and re-run setup"
@@ -86,17 +120,19 @@ fi
 print_info "Uploading .env to Secret Manager as '$SECRET_NAME'..."
 
 # Check if secret exists
-if gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT_ID" &>/dev/null; then
+if gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT_ID" --configuration=raglab &>/dev/null; then
     print_info "Secret exists, creating new version..."
     gcloud secrets versions add "$SECRET_NAME" \
-        --data-file="../.env" \
-        --project="$GCP_PROJECT_ID"
+        --data-file="$APP_ENV" \
+        --project="$GCP_PROJECT_ID" \
+        --configuration=raglab
 else
     print_info "Creating new secret..."
     gcloud secrets create "$SECRET_NAME" \
-        --data-file="../.env" \
+        --data-file="$APP_ENV" \
         --replication-policy="automatic" \
-        --project="$GCP_PROJECT_ID"
+        --project="$GCP_PROJECT_ID" \
+        --configuration=raglab
 fi
 
 # Grant service account access to the secret
@@ -104,7 +140,8 @@ print_info "Granting service account access to secret..."
 gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
     --member="serviceAccount:${SERVICE_ACCOUNT_EMAIL}" \
     --role="roles/secretmanager.secretAccessor" \
-    --project="$GCP_PROJECT_ID"
+    --project="$GCP_PROJECT_ID" \
+    --configuration=raglab
 
 print_info "Configuration uploaded to Secret Manager"
 
@@ -113,7 +150,7 @@ print_info "Configuration uploaded to Secret Manager"
 # =============================================================================
 
 print_info "Setting project..."
-gcloud config set project "$GCP_PROJECT_ID"
+gcloud config set project "$GCP_PROJECT_ID" --configuration=raglab
 
 # Check if --skip-build flag is passed
 SKIP_BUILD=false
@@ -126,18 +163,17 @@ done
 
 if [ "$SKIP_BUILD" = true ]; then
     print_warn "Skipping build (--skip-build flag detected)"
-    print_info "Using existing image: gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}:latest"
+    print_info "Using existing image: us-central1-docker.pkg.dev/${GCP_PROJECT_ID}/raglab/${SERVICE_NAME}:latest"
 else
     print_info "Building container with Cloud Build..."
     print_warn "This may take 3-5 minutes..."
 
-    # Go to project root
-    cd ..
-
-    # Build container image
-    gcloud builds submit \
-        --tag "gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}:latest" \
-        --timeout=1200s  # 20 minutes for large image with torch/CUDA
+    # Build container image using cloudbuild.yaml (with --cache-from for layer reuse)
+    # Submit from project root with absolute paths
+    gcloud builds submit "$PROJECT_ROOT" \
+        --config="$PROJECT_ROOT/cloudbuild.yaml" \
+        --timeout=1200s \
+        --configuration=raglab
 
     print_info "Container built successfully"
 fi
@@ -151,7 +187,7 @@ print_info "Configuration will be mounted from Secret Manager as /app/.env"
 
 # Deploy with Secret Manager volume mount
 gcloud run deploy "$SERVICE_NAME" \
-    --image "gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}:latest" \
+    --image "us-central1-docker.pkg.dev/${GCP_PROJECT_ID}/raglab/${SERVICE_NAME}:latest" \
     --region "$REGION" \
     --platform managed \
     --allow-unauthenticated \
@@ -164,6 +200,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --service-account "${SERVICE_ACCOUNT_EMAIL}" \
     --add-cloudsql-instances "${CLOUD_SQL_CONNECTION_NAME}" \
     --set-secrets=/config/.env="${SECRET_NAME}":latest \
+    --configuration=raglab \
     --quiet
 
 print_info "Deployment completed successfully!"
@@ -174,7 +211,8 @@ print_info "Deployment completed successfully!"
 
 SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
     --region "$REGION" \
-    --format="value(status.url)")
+    --format="value(status.url)" \
+    --configuration=raglab)
 
 print_info "=========================================="
 print_info "Deployment Summary"

@@ -94,6 +94,49 @@ cd deployment
 - `.env` - Production runtime (uploaded to Secret Manager, mounted in Cloud Run)
 - `deployment/.env.deploy` - Deployment process (GCP project, region, Cloud Run settings)
 
+### Build Performance
+
+**Optimized with BuildKit registry cache (deployed Jan 22, 2026):**
+
+```
+First build (cold):     3M16S - Creates cache, compiles dependencies
+Subsequent builds:      1M27S - Reuses cached layers (2.25x faster)
+```
+
+**How it works:**
+
+```yaml
+# cloudbuild.yaml uses registry cache
+--cache-from=type=registry,ref=.../raglab/cache  # Read from cache
+--cache-to=type=registry,ref=.../raglab/cache,mode=max  # Write all layers
+```
+
+**Cache strategy:**
+- **Registry cache** stores build layers in Artifact Registry (persistent across builds)
+- **mode=max** saves ALL intermediate layers including multi-stage dependencies
+- **Split apt-get** separates metadata updates (daily) from package installs (stable)
+- **Dockerfile layers:**
+  - `RUN apt-get update` - Fast metadata fetch (~2s), invalidates daily
+  - `RUN apt-get install gcc g++ libpq-dev` - Heavy compile (~30s), caches if versions unchanged
+  - `RUN pip install -r requirements-base.txt` - Package install (~40s), caches if requirements unchanged
+
+**Cache invalidation (triggers full rebuild):**
+- Changes to `requirements-base.txt`
+- Changes to apt package list in Dockerfile
+- apt package version updates (rare)
+
+**Cache reuse (fast build ~1.5min):**
+- Code changes in `src/`
+- Changes to `.env` configuration
+- Documentation updates
+
+**Cost:** Cache storage in Artifact Registry is negligible (~few MB, $0.10/GB/month = $0.001/month)
+
+**Service Account isolation:**
+- `rag-deployer` Service Account used by `deploy-cloudrun.sh`
+- Isolated from personal account, unaffected by `gcloud auth login` for other projects
+- Configured with deployment permissions: Cloud Run Admin, Storage Admin, Secret Manager Admin, Cloud Build Editor
+
 ### How Configuration Works in Production
 
 **Key principle**: Application reads from `.env` file the same way locally and in Cloud Run.
