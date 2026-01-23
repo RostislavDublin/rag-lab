@@ -324,6 +324,7 @@ class QueryResultItem(BaseModel):
     similarity: float
     chunk_index: int
     filename: str
+    file_type: str
     original_doc_id: int
     doc_uuid: str
     doc_metadata: dict
@@ -1062,6 +1063,7 @@ async def query_rag(
                 "similarity": result["similarity"],
                 "chunk_index": result["chunk_index"],
                 "filename": result["filename"],
+                "file_type": result["file_type"],
                 "original_doc_id": result["original_doc_id"],
                 "doc_uuid": result["doc_uuid"],
                 "doc_metadata": result["doc_metadata"],
