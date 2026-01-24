@@ -442,7 +442,9 @@ class ChatRequest(BaseModel):
 
 class ChatSourceItem(BaseModel):
     """Source citation from retrieved chunks"""
+    original_doc_id: int
     filename: str
+    file_type: str
     chunk_index: int
     chunk_text: str
     similarity: float
@@ -1288,7 +1290,9 @@ async def chat_with_documents(
             
             # Build source citation
             sources.append(ChatSourceItem(
+                original_doc_id=result["original_doc_id"],
                 filename=filename,
+                file_type=result["file_type"],
                 chunk_index=result["chunk_index"],
                 chunk_text=chunk_text[:500],  # Truncate for response size
                 similarity=result["similarity"],
