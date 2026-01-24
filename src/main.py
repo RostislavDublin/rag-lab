@@ -85,6 +85,9 @@ LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 PORT = int(os.getenv("PORT", "8080"))
 GCS_BUCKET = os.getenv("GCS_BUCKET", "raglab-documents")
 
+# Model configuration
+CHAT_MODEL = os.getenv("CHAT_MODEL", "gemini-2.5-flash-lite")
+
 # Version tracking
 APP_VERSION = "0.2.0"
 APP_START_TIME = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -394,6 +397,65 @@ class DocumentChunksResponse(BaseModel):
     filename: str
     total_chunks: int
     chunks: List[ChunkInfo]
+
+
+class ChatRequest(BaseModel):
+    query: str = Field(..., description="User question to answer using RAG", min_length=1)
+    top_k: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Number of relevant chunks to retrieve for context (1-20)"
+    )
+    temperature: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=2.0,
+        description="LLM temperature for answer generation (0.0-2.0). Lower = more focused, higher = more creative"
+    )
+    max_tokens: int = Field(
+        default=2048,
+        ge=256,
+        le=8192,
+        description="Maximum tokens in generated answer (256-8192)"
+    )
+    filters: Optional[dict] = Field(
+        default=None,
+        description="MongoDB-style metadata filters for context retrieval"
+    )
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "query": "What is the interest rate on my mortgage agreement in Moscow?",
+                "top_k": 5,
+                "temperature": 0.3,
+                "max_tokens": 2048,
+                "filters": {
+                    "tags": {"$in": ["mortgage", "real-estate"]},
+                    "department": "legal"
+                }
+            }
+        }
+    )
+
+
+class ChatSourceItem(BaseModel):
+    """Source citation from retrieved chunks"""
+    filename: str
+    chunk_index: int
+    chunk_text: str
+    similarity: float
+    doc_metadata: dict
+
+
+class ChatResponse(BaseModel):
+    query: str = Field(..., description="Original user query")
+    answer: str = Field(..., description="Generated answer based on retrieved context")
+    sources: List[ChatSourceItem] = Field(..., description="Source chunks used for answer generation")
+    model: str = Field(..., description="Model used for generation (e.g., gemini-2.5-flash-lite)")
+    tokens_used: Optional[int] = Field(None, description="Approximate tokens used in generation")
+    retrieved_chunks: int = Field(..., description="Number of chunks retrieved for context")
 
 
 # Routes
@@ -1088,6 +1150,210 @@ async def query_rag(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Query failed: {str(e)}",
+        )
+
+
+@app.post("/v1/chat", response_model=ChatResponse)
+async def chat_with_documents(
+    request: ChatRequest,
+    user_email: str = Depends(get_current_user)
+):
+    """
+    Chat with documents - RAG-powered question answering
+    
+    **Architecture:**
+    1. Retrieve relevant chunks using hybrid search (BM25 + Vector + RRF)
+    2. Assemble context from top-k chunks
+    3. Generate answer using Gemini with context
+    4. Return answer with source citations
+    
+    **Authentication:** Requires valid JWT token in Authorization header.
+    
+    **Example:**
+        POST /v1/chat
+        {
+            "query": "What is the interest rate on my mortgage agreement in Moscow?",
+            "top_k": 5,
+            "temperature": 0.3,
+            "max_tokens": 2048,
+            "filters": {
+                "tags": {"$in": ["mortgage", "real-estate"]},
+                "department": "legal"
+            }
+        }
+    
+    **Response:**
+        {
+            "query": "What is the interest rate...",
+            "answer": "Based on your mortgage agreement...",
+            "sources": [
+                {
+                    "filename": "mortgage_agreement.pdf",
+                    "chunk_index": 3,
+                    "chunk_text": "Interest rate: 5.2% per annum...",
+                    "similarity": 0.89,
+                    "doc_metadata": {"department": "legal"}
+                }
+            ],
+            "model": "gemini-2.5-flash-lite",
+            "tokens_used": 1024,
+            "retrieved_chunks": 5
+        }
+    """
+    try:
+        if genai_client is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Chat model not initialized",
+            )
+        
+        # Step 1: Retrieve relevant chunks using existing query logic
+        logger.info(f"Chat query from {user_email}: {request.query[:100]}")
+        
+        # Create QueryRequest for retrieval
+        query_request = QueryRequest(
+            query=request.query,
+            top_k=request.top_k,
+            min_similarity=0.5,  # Reasonable threshold for context
+            rerank=False,  # No reranking needed for chat context
+            use_hybrid=True,  # Use hybrid search
+            filters=request.filters
+        )
+        
+        # Generate query embedding
+        response = genai_client.models.embed_content(
+            model="text-embedding-005",
+            contents=request.query,
+        )
+        query_embedding = response.embeddings[0].values
+        
+        # Perform hybrid search
+        if query_request.use_hybrid:
+            results = await _hybrid_search(query_request, query_embedding)
+        else:
+            # Fallback to pure vector search
+            results = await vector_db.search_similar_chunks(
+                query_embedding=query_embedding,
+                top_k=query_request.top_k,
+                min_similarity=query_request.min_similarity,
+                filters=query_request.filters
+            )
+        
+        if not results:
+            # No relevant chunks found - return helpful message
+            return ChatResponse(
+                query=request.query,
+                answer="I couldn't find any relevant information in your documents to answer this question. Please make sure you've uploaded documents related to this topic.",
+                sources=[],
+                model=CHAT_MODEL,
+                tokens_used=0,
+                retrieved_chunks=0
+            )
+        
+        # Step 2: Fetch chunk texts from GCS
+        chunks_by_doc = {}
+        for result in results:
+            doc_uuid = result["doc_uuid"]
+            if doc_uuid not in chunks_by_doc:
+                chunks_by_doc[doc_uuid] = []
+            chunks_by_doc[doc_uuid].append(result)
+        
+        async def fetch_doc_chunks(doc_uuid, doc_results):
+            try:
+                chunk_indices = [r["chunk_index"] for r in doc_results]
+                chunk_texts = await document_storage.fetch_chunks(doc_uuid, chunk_indices)
+                
+                for result, chunk_text in zip(doc_results, chunk_texts):
+                    result["chunk_text"] = chunk_text
+            except Exception as e:
+                logger.error(f"Failed to fetch chunks for {doc_uuid}: {e}")
+                for result in doc_results:
+                    result["chunk_text"] = "[Content unavailable]"
+        
+        await asyncio.gather(*[
+            fetch_doc_chunks(doc_uuid, doc_results)
+            for doc_uuid, doc_results in chunks_by_doc.items()
+        ], return_exceptions=True)
+        
+        # Step 3: Assemble context from chunks
+        context_parts = []
+        sources = []
+        
+        for idx, result in enumerate(results[:request.top_k], 1):
+            chunk_text = result.get("chunk_text", "[Content unavailable]")
+            filename = result["filename"]
+            
+            # Add to context with source reference
+            context_parts.append(f"[Source {idx}: {filename}, chunk {result['chunk_index']}]\n{chunk_text}\n")
+            
+            # Build source citation
+            sources.append(ChatSourceItem(
+                filename=filename,
+                chunk_index=result["chunk_index"],
+                chunk_text=chunk_text[:500],  # Truncate for response size
+                similarity=result["similarity"],
+                doc_metadata=result.get("doc_metadata", {})
+            ))
+        
+        context = "\n".join(context_parts)
+        
+        # Step 4: Generate answer using Gemini
+        system_prompt = """You are a helpful AI assistant that answers questions based on provided document excerpts.
+
+INSTRUCTIONS:
+- Answer the question using ONLY the information from the provided sources
+- Be precise and cite specific sources when possible (e.g., "According to Source 2...")
+- If the sources don't contain enough information, clearly state what's missing
+- Keep answers concise but complete
+- Use natural language and be conversational
+- If sources conflict, acknowledge the discrepancy
+
+IMPORTANT:
+- DO NOT make up information not present in the sources
+- DO NOT use external knowledge
+- If you can't answer based on sources, say so clearly"""
+
+        user_prompt = f"""CONTEXT FROM DOCUMENTS:
+
+{context}
+
+USER QUESTION:
+{request.query}
+
+Please provide a clear, accurate answer based ONLY on the context above."""
+
+        # Call Gemini for generation
+        generation_response = genai_client.models.generate_content(
+            model=CHAT_MODEL,
+            contents=user_prompt,
+            config={
+                "system_instruction": system_prompt,
+                "temperature": request.temperature,
+                "max_output_tokens": request.max_tokens,
+            }
+        )
+        
+        answer = generation_response.text
+        
+        # Estimate tokens used (rough approximation)
+        tokens_used = len(context.split()) + len(answer.split()) + 200  # +200 for system prompt
+        
+        return ChatResponse(
+            query=request.query,
+            answer=answer,
+            sources=sources,
+            model=CHAT_MODEL,
+            tokens_used=tokens_used,
+            retrieved_chunks=len(results)
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chat generation failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chat generation failed: {str(e)}",
         )
 
 
