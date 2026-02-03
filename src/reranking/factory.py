@@ -59,15 +59,15 @@ class RerankingFactory:
         if not reranker_type:
             raise ValueError("RERANKER_TYPE environment variable is required when reranking enabled")
         reranker_type = reranker_type.lower()
-        
-        model = os.getenv("RERANKER_MODEL")
-        if not model:
-            raise ValueError("RERANKER_MODEL environment variable is required when reranking enabled")
+
+        model = (os.getenv("RERANKER_MODEL") or "").strip()
         
         # Create based on type
         try:
             if reranker_type == "gemini":
                 # Gemini LLM-based reranking
+                if not model:
+                    model = "gemini-2.5-flash"
                 logger.info(f"Creating Gemini LLM reranker: {model}")
                 # Support both GOOGLE_CLOUD_PROJECT and GCP_PROJECT_ID env vars
                 project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")

@@ -423,6 +423,17 @@ class ChatRequest(BaseModel):
         default=None,
         description="MongoDB-style metadata filters for context retrieval"
     )
+
+    rerank: bool = Field(
+        default=True,
+        description="Enable cross-encoder reranking for better context selection (adds latency)"
+    )
+    rerank_candidates: int = Field(
+        default=50,
+        ge=5,
+        le=200,
+        description="Number of candidates to retrieve for reranking (only used if rerank=true)"
+    )
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -434,7 +445,9 @@ class ChatRequest(BaseModel):
                 "filters": {
                     "tags": {"$in": ["mortgage", "real-estate"]},
                     "department": "legal"
-                }
+                },
+                "rerank": True,
+                "rerank_candidates": 50
             }
         }
     )
@@ -1216,8 +1229,9 @@ async def chat_with_documents(
         query_request = QueryRequest(
             query=request.query,
             top_k=request.top_k,
-            min_similarity=0.5,  # Reasonable threshold for context
-            rerank=False,  # No reranking needed for chat context
+            min_similarity=0.0,  # Avoid filtering out table-like chunks; reranker will select best
+            rerank=request.rerank,
+            rerank_candidates=request.rerank_candidates,
             use_hybrid=True,  # Use hybrid search
             filters=request.filters
         )
@@ -1236,10 +1250,62 @@ async def chat_with_documents(
             # Fallback to pure vector search
             results = await vector_db.search_similar_chunks(
                 query_embedding=query_embedding,
-                top_k=query_request.top_k,
+                top_k=(query_request.rerank_candidates if query_request.rerank else query_request.top_k),
                 min_similarity=query_request.min_similarity,
                 filters=query_request.filters
             )
+
+        # Optional reranking (same approach as /v1/query)
+        if query_request.rerank and results:
+            from src.reranking import get_reranker
+
+            logger.info(f"Chat reranking requested: {query_request.rerank}, candidates: {len(results)}")
+            reranker = get_reranker(force_reload=False)
+
+            if reranker is None:
+                logger.warning("Chat reranking requested but RERANKER_ENABLED=false. Using retrieval results.")
+                results = results[:query_request.top_k]
+            else:
+                # Fetch chunk texts for reranking (parallel, grouped by doc_uuid)
+                chunks_by_doc_rerank = {}
+                for idx, result in enumerate(results):
+                    doc_uuid = result["doc_uuid"]
+                    if doc_uuid not in chunks_by_doc_rerank:
+                        chunks_by_doc_rerank[doc_uuid] = []
+                    chunks_by_doc_rerank[doc_uuid].append((idx, result))
+
+                chunks_for_rerank = [""] * len(results)
+
+                async def fetch_rerank_chunks(doc_uuid, doc_items):
+                    try:
+                        chunk_indices = [r["chunk_index"] for _, r in doc_items]
+                        chunk_texts = await document_storage.fetch_chunks(doc_uuid, chunk_indices)
+                        for (original_idx, _), text in zip(doc_items, chunk_texts):
+                            chunks_for_rerank[original_idx] = text
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch chunks for chat reranking: {doc_uuid} - {e}")
+
+                await asyncio.gather(*[
+                    fetch_rerank_chunks(doc_uuid, doc_items)
+                    for doc_uuid, doc_items in chunks_by_doc_rerank.items()
+                ], return_exceptions=True)
+
+                logger.info(f"Chat reranking {len(chunks_for_rerank)} candidates to top {query_request.top_k}")
+                rerank_results = await reranker.rerank(
+                    query=request.query,
+                    documents=chunks_for_rerank,
+                    top_k=query_request.top_k
+                )
+
+                reranked_items = []
+                for rr in rerank_results:
+                    result = results[rr.index].copy()  # COPY to avoid mutating shared dict!
+                    result["rerank_score"] = rr.score
+                    result["rerank_reasoning"] = rr.reasoning
+                    result["chunk_text"] = rr.text  # Already fetched for reranking
+                    reranked_items.append(result)
+
+                results = reranked_items
         
         if not results:
             # No relevant chunks found - return helpful message
@@ -1252,13 +1318,14 @@ async def chat_with_documents(
                 retrieved_chunks=0
             )
         
-        # Step 2: Fetch chunk texts from GCS
+        # Step 2: Fetch chunk texts from GCS (skip chunks already fetched during reranking)
         chunks_by_doc = {}
         for result in results:
             doc_uuid = result["doc_uuid"]
             if doc_uuid not in chunks_by_doc:
                 chunks_by_doc[doc_uuid] = []
-            chunks_by_doc[doc_uuid].append(result)
+            if "chunk_text" not in result:
+                chunks_by_doc[doc_uuid].append(result)
         
         async def fetch_doc_chunks(doc_uuid, doc_results):
             try:
@@ -1272,10 +1339,11 @@ async def chat_with_documents(
                 for result in doc_results:
                     result["chunk_text"] = "[Content unavailable]"
         
-        await asyncio.gather(*[
-            fetch_doc_chunks(doc_uuid, doc_results)
-            for doc_uuid, doc_results in chunks_by_doc.items()
-        ], return_exceptions=True)
+        if chunks_by_doc:
+            await asyncio.gather(*[
+                fetch_doc_chunks(doc_uuid, doc_results)
+                for doc_uuid, doc_results in chunks_by_doc.items()
+            ], return_exceptions=True)
         
         # Step 3: Assemble context from chunks
         context_parts = []
@@ -1294,7 +1362,7 @@ async def chat_with_documents(
                 filename=filename,
                 file_type=result["file_type"],
                 chunk_index=result["chunk_index"],
-                chunk_text=chunk_text[:500],  # Truncate for response size
+                chunk_text=chunk_text,
                 similarity=result["similarity"],
                 doc_metadata=result.get("doc_metadata", {})
             ))
@@ -1305,6 +1373,8 @@ async def chat_with_documents(
         system_prompt = """You are a helpful AI assistant that answers questions based on provided document excerpts.
 
 INSTRUCTIONS:
+- Determine the language of the USER QUESTION and respond entirely in that same language.
+- If the question is mixed-language, pick the dominant language.
 - Answer the question using ONLY the information from the provided sources
 - Be precise and cite specific sources when possible (e.g., "According to Source 2...")
 - If the sources don't contain enough information, clearly state what's missing
